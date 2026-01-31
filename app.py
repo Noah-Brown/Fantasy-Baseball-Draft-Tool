@@ -11,6 +11,7 @@ from src.projections import (
     clear_all_players,
 )
 from src.settings import DEFAULT_SETTINGS
+from src.values import calculate_all_player_values
 
 # Page configuration
 st.set_page_config(
@@ -243,6 +244,35 @@ def show_import_page(session):
                     st.rerun()
                 except Exception as e:
                     st.error(f"Error importing: {e}")
+
+    # Calculate Values section
+    st.divider()
+    st.subheader("Calculate Player Values")
+
+    # Check if we have players to calculate values for
+    total_players = session.query(Player).count()
+
+    if total_players > 0:
+        st.markdown("""
+        Calculate SGP (Standings Gain Points) and dollar values for all players.
+        This uses the standard deviation method to determine how much each player
+        contributes to your standings in each category.
+        """)
+
+        if st.button("Calculate Values", type="primary"):
+            try:
+                count = calculate_all_player_values(session, DEFAULT_SETTINGS)
+                st.success(f"Calculated values for {count} players!")
+                st.rerun()
+            except Exception as e:
+                st.error(f"Error calculating values: {e}")
+
+        # Show summary of current values
+        players_with_values = session.query(Player).filter(Player.dollar_value.isnot(None)).count()
+        if players_with_values > 0:
+            st.info(f"{players_with_values} players currently have calculated values.")
+    else:
+        st.warning("Import players first before calculating values.")
 
 
 def show_settings_page(session):
