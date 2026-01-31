@@ -322,6 +322,88 @@ def _calculate_player_sgp(
     return total_sgp
 
 
+def calculate_remaining_player_values(session: Session, settings: LeagueSettings = None) -> int:
+    """
+    Recalculate values for remaining undrafted players.
+
+    Adjusts pool sizes based on remaining roster slots and uses
+    remaining budget across all teams. Clears the values_stale flag
+    after calculation.
+
+    Args:
+        session: Database session
+        settings: League settings (uses DEFAULT_SETTINGS if None)
+
+    Returns:
+        Number of players with updated values
+    """
+    from .draft import get_draft_state, get_remaining_roster_slots, get_remaining_budget
+
+    if settings is None:
+        settings = DEFAULT_SETTINGS
+
+    draft_state = get_draft_state(session)
+
+    # Get remaining roster slots
+    remaining_slots = get_remaining_roster_slots(session, settings)
+    remaining_hitter_slots = remaining_slots["hitters"]
+    remaining_pitcher_slots = remaining_slots["pitchers"]
+
+    # Get remaining budget
+    remaining_budget = get_remaining_budget(session)
+
+    # Get undrafted players only
+    hitters = get_available_hitters(session)
+    pitchers = get_available_pitchers(session)
+
+    # Calculate values for each pool with adjusted sizes and budgets
+    hitter_budget = remaining_budget * settings.hitter_budget_pct
+    pitcher_budget = remaining_budget * (1 - settings.hitter_budget_pct)
+
+    hitter_count = _calculate_pool_values(
+        players=hitters,
+        pool_size=remaining_hitter_slots,
+        budget=hitter_budget,
+        categories=settings.hitting_categories,
+        player_type="hitter",
+        min_bid=settings.min_bid,
+    )
+
+    pitcher_count = _calculate_pool_values(
+        players=pitchers,
+        pool_size=remaining_pitcher_slots,
+        budget=pitcher_budget,
+        categories=settings.pitching_categories,
+        player_type="pitcher",
+        min_bid=settings.min_bid,
+    )
+
+    # Clear stale flag
+    if draft_state:
+        draft_state.values_stale = False
+
+    session.commit()
+    return hitter_count + pitcher_count
+
+
+def get_available_hitters(session: Session) -> list[Player]:
+    """Get all undrafted hitters."""
+    return (
+        session.query(Player)
+        .filter(Player.player_type == "hitter", Player.is_drafted == False)
+        .all()
+    )
+
+
+def get_available_pitchers(session: Session) -> list[Player]:
+    """Get all undrafted pitchers."""
+    return (
+        session.query(Player)
+        .filter(Player.player_type == "pitcher", Player.is_drafted == False)
+        .all()
+    )
+
+
 def get_player_value_breakdown(
     player: Player,
     settings: LeagueSettings = None,

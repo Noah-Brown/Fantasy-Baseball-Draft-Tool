@@ -9,9 +9,20 @@ from src.projections import (
     import_hitters_csv,
     import_pitchers_csv,
     clear_all_players,
+    get_available_players,
 )
 from src.settings import DEFAULT_SETTINGS
-from src.values import calculate_all_player_values
+from src.values import calculate_all_player_values, calculate_remaining_player_values
+from src.draft import (
+    initialize_draft,
+    draft_player,
+    undo_pick,
+    get_draft_history,
+    reset_draft,
+    get_draft_state,
+    get_all_teams,
+    get_user_team,
+)
 
 # Page configuration
 st.set_page_config(
@@ -40,7 +51,7 @@ def main():
         st.header("Navigation")
         page = st.radio(
             "Select Page",
-            ["Player Database", "Import Projections", "League Settings"],
+            ["Player Database", "Draft Room", "Import Projections", "League Settings"],
             label_visibility="collapsed",
         )
 
@@ -56,6 +67,8 @@ def main():
     # Page routing
     if page == "Player Database":
         show_player_database(session)
+    elif page == "Draft Room":
+        show_draft_room(session)
     elif page == "Import Projections":
         show_import_page(session)
     elif page == "League Settings":
@@ -170,6 +183,249 @@ def show_player_database(session):
     )
 
     st.caption(f"Showing {len(players)} players")
+
+
+def show_draft_room(session):
+    """Draft Room page for conducting the auction draft."""
+    st.header("Draft Room")
+
+    draft_state = get_draft_state(session)
+
+    # Sidebar controls
+    with st.sidebar:
+        st.divider()
+
+        if not draft_state or not draft_state.is_active:
+            # Draft not initialized - show setup
+            st.subheader("Start Draft")
+
+            team_name = st.text_input(
+                "Your Team Name",
+                value="My Team",
+                key="user_team_name",
+            )
+
+            if st.button("Start Draft", type="primary"):
+                # Check if players exist
+                player_count = session.query(Player).count()
+                if player_count == 0:
+                    st.error("Import players first before starting draft!")
+                else:
+                    initialize_draft(session, DEFAULT_SETTINGS, team_name)
+                    st.success("Draft initialized!")
+                    st.rerun()
+        else:
+            # Draft is active - show draft controls
+            st.subheader("Draft Player")
+
+            # Team selector with remaining budget
+            teams = get_all_teams(session)
+            team_options = {
+                f"{t.name} (${t.remaining_budget})": t.id
+                for t in teams
+            }
+
+            # Default to user team
+            user_team = get_user_team(session)
+            default_idx = 0
+            if user_team:
+                for idx, label in enumerate(team_options.keys()):
+                    if user_team.name in label:
+                        default_idx = idx
+                        break
+
+            selected_team_label = st.selectbox(
+                "Team",
+                options=list(team_options.keys()),
+                index=default_idx,
+                key="draft_team",
+            )
+            selected_team_id = team_options[selected_team_label]
+
+            # Player search/selector
+            available_players = get_available_players(session)
+            # Sort by dollar value (descending)
+            available_players.sort(
+                key=lambda p: p.dollar_value if p.dollar_value else 0,
+                reverse=True
+            )
+
+            if available_players:
+                player_options = {
+                    f"{p.name} (${p.dollar_value:.0f})" if p.dollar_value else p.name: p.id
+                    for p in available_players
+                }
+
+                selected_player_label = st.selectbox(
+                    "Player",
+                    options=list(player_options.keys()),
+                    key="draft_player",
+                )
+                selected_player_id = player_options[selected_player_label]
+
+                # Get selected player for default price
+                selected_player = session.get(Player, selected_player_id)
+                default_price = int(selected_player.dollar_value) if selected_player.dollar_value else 1
+
+                price = st.number_input(
+                    "Price ($)",
+                    min_value=1,
+                    max_value=999,
+                    value=default_price,
+                    key="draft_price",
+                )
+
+                if st.button("DRAFT", type="primary", use_container_width=True):
+                    try:
+                        draft_player(session, selected_player_id, selected_team_id, price)
+                        st.success(f"Drafted {selected_player.name} for ${price}!")
+                        st.rerun()
+                    except ValueError as e:
+                        st.error(str(e))
+            else:
+                st.info("No available players")
+
+            # Team budgets summary
+            st.divider()
+            st.subheader("Team Budgets")
+
+            for team in teams:
+                col1, col2 = st.columns([2, 1])
+                with col1:
+                    label = team.name
+                    if team.is_user_team:
+                        label += " (You)"
+                    st.text(label)
+                with col2:
+                    st.text(f"${team.remaining_budget}")
+
+            # Reset draft button
+            st.divider()
+            if st.button("Reset Draft", type="secondary"):
+                reset_draft(session)
+                st.success("Draft reset!")
+                st.rerun()
+
+    # Main area
+    if not draft_state or not draft_state.is_active:
+        st.info("Set your team name in the sidebar and click 'Start Draft' to begin.")
+        return
+
+    # Recalculate values button with stale indicator
+    col1, col2 = st.columns([3, 1])
+    with col1:
+        if draft_state.values_stale:
+            st.warning("Player values are stale and need recalculation.")
+    with col2:
+        button_label = "Recalculate Values"
+        if draft_state.values_stale:
+            button_label = "⚠️ Recalculate Values"
+
+        if st.button(button_label, type="primary" if draft_state.values_stale else "secondary"):
+            try:
+                count = calculate_remaining_player_values(session, DEFAULT_SETTINGS)
+                st.success(f"Recalculated values for {count} available players!")
+                st.rerun()
+            except Exception as e:
+                st.error(f"Error: {e}")
+
+    # Available players table
+    st.subheader("Available Players")
+
+    # Filters for available players
+    col1, col2, col3 = st.columns(3)
+
+    with col1:
+        player_type = st.selectbox(
+            "Player Type",
+            ["All", "Hitters", "Pitchers"],
+            key="avail_player_type",
+        )
+
+    with col2:
+        position_filter = st.text_input(
+            "Position Filter",
+            placeholder="e.g., SS, OF, SP",
+            key="avail_position",
+        )
+
+    with col3:
+        search = st.text_input(
+            "Search Player",
+            placeholder="Player name...",
+            key="avail_search",
+        )
+
+    # Build query for available players
+    query = session.query(Player).filter(Player.is_drafted == False)
+
+    if player_type == "Hitters":
+        query = query.filter(Player.player_type == "hitter")
+    elif player_type == "Pitchers":
+        query = query.filter(Player.player_type == "pitcher")
+
+    if position_filter:
+        query = query.filter(Player.positions.contains(position_filter.upper()))
+
+    if search:
+        query = query.filter(Player.name.ilike(f"%{search}%"))
+
+    # Sort by dollar value descending
+    query = query.order_by(Player.dollar_value.desc())
+
+    available = query.limit(100).all()
+
+    if available:
+        df = pd.DataFrame([
+            {
+                "Name": p.name,
+                "Team": p.team or "",
+                "Type": p.player_type.title() if p.player_type else "",
+                "Pos": p.positions or "",
+                "Value": f"${p.dollar_value:.0f}" if p.dollar_value else "-",
+            }
+            for p in available
+        ])
+
+        st.dataframe(
+            df,
+            use_container_width=True,
+            hide_index=True,
+        )
+        st.caption(f"Showing top {len(available)} available players by value")
+    else:
+        st.info("No available players match the current filters.")
+
+    # Draft history
+    st.divider()
+    st.subheader("Draft History")
+
+    history = get_draft_history(session, limit=20)
+
+    if history:
+        for pick in history:
+            col1, col2, col3, col4 = st.columns([1, 3, 2, 1])
+
+            with col1:
+                st.text(f"#{pick['pick_number']}")
+
+            with col2:
+                st.text(pick['player_name'])
+
+            with col3:
+                st.text(f"{pick['team_name']} - ${pick['price']}")
+
+            with col4:
+                if st.button("Undo", key=f"undo_{pick['pick_id']}"):
+                    player = undo_pick(session, pick['pick_id'])
+                    if player:
+                        st.success(f"Undid pick: {player.name}")
+                    st.rerun()
+
+        if len(history) >= 20:
+            st.caption("Showing last 20 picks")
+    else:
+        st.info("No picks yet. Start drafting!")
 
 
 def show_import_page(session):

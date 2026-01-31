@@ -127,6 +127,7 @@ class DraftState(Base):
     budget_per_team = Column(Integer, default=260)
     current_pick = Column(Integer, default=0)
     is_active = Column(Boolean, default=False)
+    values_stale = Column(Boolean, default=False)
     created_at = Column(DateTime, default=datetime.utcnow)
     updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
 
