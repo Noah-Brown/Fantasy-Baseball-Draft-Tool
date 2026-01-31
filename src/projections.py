@@ -1,0 +1,200 @@
+"""Import and process Steamer projections."""
+
+import pandas as pd
+from pathlib import Path
+from sqlalchemy.orm import Session
+
+from .database import Player
+
+
+# Column mappings from Fangraphs Steamer CSV to our database
+HITTER_COLUMN_MAP = {
+    "Name": "name",
+    "Team": "team",
+    "PA": "pa",
+    "AB": "ab",
+    "H": "h",
+    "R": "r",
+    "HR": "hr",
+    "RBI": "rbi",
+    "SB": "sb",
+    "AVG": "avg",
+    "OBP": "obp",
+    "SLG": "slg",
+}
+
+PITCHER_COLUMN_MAP = {
+    "Name": "name",
+    "Team": "team",
+    "IP": "ip",
+    "W": "w",
+    "SV": "sv",
+    "SO": "k",  # Fangraphs uses SO for strikeouts
+    "K": "k",   # Some exports use K
+    "ERA": "era",
+    "WHIP": "whip",
+}
+
+
+def import_hitters_csv(session: Session, csv_path: str | Path) -> int:
+    """
+    Import hitter projections from a Steamer CSV file.
+
+    Args:
+        session: Database session
+        csv_path: Path to the CSV file
+
+    Returns:
+        Number of players imported
+    """
+    df = pd.read_csv(csv_path)
+
+    # Normalize column names
+    df.columns = df.columns.str.strip()
+
+    count = 0
+    for _, row in df.iterrows():
+        player = Player(
+            name=row.get("Name", ""),
+            team=row.get("Team", ""),
+            positions=_extract_positions(row),
+            player_type="hitter",
+            pa=_safe_float(row.get("PA")),
+            ab=_safe_float(row.get("AB")),
+            h=_safe_float(row.get("H")),
+            r=_safe_float(row.get("R")),
+            hr=_safe_float(row.get("HR")),
+            rbi=_safe_float(row.get("RBI")),
+            sb=_safe_float(row.get("SB")),
+            avg=_safe_float(row.get("AVG")),
+            obp=_safe_float(row.get("OBP")),
+            slg=_safe_float(row.get("SLG")),
+        )
+        session.add(player)
+        count += 1
+
+    session.commit()
+    return count
+
+
+def import_pitchers_csv(session: Session, csv_path: str | Path) -> int:
+    """
+    Import pitcher projections from a Steamer CSV file.
+
+    Args:
+        session: Database session
+        csv_path: Path to the CSV file
+
+    Returns:
+        Number of players imported
+    """
+    df = pd.read_csv(csv_path)
+
+    # Normalize column names
+    df.columns = df.columns.str.strip()
+
+    count = 0
+    for _, row in df.iterrows():
+        # Determine if SP or RP based on various indicators
+        positions = _extract_pitcher_positions(row)
+
+        # Use SO if K not present
+        k_value = row.get("K") if "K" in df.columns else row.get("SO")
+
+        player = Player(
+            name=row.get("Name", ""),
+            team=row.get("Team", ""),
+            positions=positions,
+            player_type="pitcher",
+            ip=_safe_float(row.get("IP")),
+            w=_safe_float(row.get("W")),
+            sv=_safe_float(row.get("SV")),
+            k=_safe_float(k_value),
+            era=_safe_float(row.get("ERA")),
+            whip=_safe_float(row.get("WHIP")),
+        )
+        session.add(player)
+        count += 1
+
+    session.commit()
+    return count
+
+
+def _extract_positions(row) -> str:
+    """Extract position eligibility from a row."""
+    # Fangraphs includes position in various columns
+    # Check for explicit position column
+    if "Pos" in row.index:
+        return str(row["Pos"])
+    if "Position" in row.index:
+        return str(row["Position"])
+
+    # Some exports have position in the name like "Mike Trout (CF)"
+    name = str(row.get("Name", ""))
+    if "(" in name and ")" in name:
+        start = name.rfind("(") + 1
+        end = name.rfind(")")
+        return name[start:end]
+
+    return ""
+
+
+def _extract_pitcher_positions(row) -> str:
+    """Determine if a pitcher is SP, RP, or both."""
+    positions = []
+
+    # Check for explicit position
+    if "Pos" in row.index:
+        return str(row["Pos"])
+
+    # Infer from stats
+    gs = _safe_float(row.get("GS", 0))  # Games started
+    sv = _safe_float(row.get("SV", 0))  # Saves
+    g = _safe_float(row.get("G", 0))    # Total games
+
+    if gs and gs > 5:
+        positions.append("SP")
+    if sv and sv > 0:
+        positions.append("RP")
+    elif g and gs and (g - gs) > 10:
+        positions.append("RP")
+
+    # Default to SP if we can't determine
+    if not positions:
+        positions.append("SP")
+
+    return ",".join(positions)
+
+
+def _safe_float(value) -> float | None:
+    """Safely convert a value to float."""
+    if pd.isna(value):
+        return None
+    try:
+        return float(value)
+    except (ValueError, TypeError):
+        return None
+
+
+def get_all_hitters(session: Session) -> list[Player]:
+    """Get all hitters from the database."""
+    return session.query(Player).filter(Player.player_type == "hitter").all()
+
+
+def get_all_pitchers(session: Session) -> list[Player]:
+    """Get all pitchers from the database."""
+    return session.query(Player).filter(Player.player_type == "pitcher").all()
+
+
+def get_available_players(session: Session, player_type: str = None) -> list[Player]:
+    """Get all undrafted players."""
+    query = session.query(Player).filter(Player.is_drafted == False)
+    if player_type:
+        query = query.filter(Player.player_type == player_type)
+    return query.all()
+
+
+def clear_all_players(session: Session):
+    """Remove all players from the database."""
+    session.query(Player).delete()
+    session.commit()

@@ -1,0 +1,6 @@
+# Place Steamer projection CSV files here
+# Download from: https://www.fangraphs.com/projections
+#
+# Expected files:
+# - steamer_hitters.csv
+# - steamer_pitchers.csv
