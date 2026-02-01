@@ -12,6 +12,10 @@ from src.values import (
     _get_player_stats,
     _calculate_pool_values,
     calculate_category_surplus,
+    calculate_team_category_sgp,
+    calculate_team_raw_stats,
+    estimate_standings_position,
+    analyze_team_category_balance,
 )
 
 
@@ -593,3 +597,338 @@ class TestCategorySurplus:
         # sb and avg contribute 0%, should get 0%
         assert cat_surplus["sb"] == 0
         assert cat_surplus["avg"] == 0
+
+
+class TestEstimateStandingsPosition:
+    """Tests for the estimate_standings_position function."""
+
+    def test_zero_sgp_returns_middle(self):
+        """Test that zero SGP returns middle position."""
+        position = estimate_standings_position(0, num_teams=12)
+        # Middle for 12 teams is 6 or 7
+        assert position in [6, 7]
+
+    def test_positive_sgp_better_position(self):
+        """Test that positive SGP gives better (lower) position."""
+        position = estimate_standings_position(4.0, num_teams=12, sgp_spread=2.0)
+        # Should be in top half
+        assert position <= 5
+
+    def test_negative_sgp_worse_position(self):
+        """Test that negative SGP gives worse (higher) position."""
+        position = estimate_standings_position(-4.0, num_teams=12, sgp_spread=2.0)
+        # Should be in bottom half
+        assert position >= 8
+
+    def test_position_clamped_to_first(self):
+        """Test that very high SGP clamps to 1st place."""
+        position = estimate_standings_position(100.0, num_teams=12)
+        assert position == 1
+
+    def test_position_clamped_to_last(self):
+        """Test that very low SGP clamps to last place."""
+        position = estimate_standings_position(-100.0, num_teams=12)
+        assert position == 12
+
+    def test_different_league_sizes(self):
+        """Test with different number of teams."""
+        # 10-team league
+        position = estimate_standings_position(0, num_teams=10)
+        assert 4 <= position <= 6
+
+        # 14-team league
+        position = estimate_standings_position(0, num_teams=14)
+        assert 6 <= position <= 8
+
+
+class TestTeamCategorySGP:
+    """Tests for the calculate_team_category_sgp function."""
+
+    def test_empty_picks_returns_zeros(self, settings):
+        """Test that empty picks list returns zero totals."""
+        result = calculate_team_category_sgp([], settings)
+
+        for cat in ["r", "hr", "rbi", "sb", "avg", "w", "sv", "k", "era", "whip"]:
+            assert cat in result
+            assert result[cat] == 0.0
+
+    def test_single_hitter_sgp(self, session, settings):
+        """Test SGP calculation for single hitter."""
+        from src.database import Team, DraftPick
+
+        # Create team first
+        team = Team(name="Test", budget=260, is_user_team=True)
+        session.add(team)
+        session.commit()
+
+        # Create pick
+        pick = DraftPick(team_id=team.id, price=10, pick_number=1)
+        session.add(pick)
+        session.commit()
+
+        # Create player with known SGP breakdown, linked to pick
+        player = Player(
+            name="Test Hitter",
+            player_type="hitter",
+            sgp=5.0,
+            sgp_breakdown={"r": 2.0, "hr": 1.5, "rbi": 1.0, "sb": 0.5, "avg": 0.0},
+            draft_pick_id=pick.id,
+            is_drafted=True,
+        )
+        session.add(player)
+        session.commit()
+
+        # Refresh to get relationship
+        session.refresh(team)
+
+        result = calculate_team_category_sgp(team.draft_picks, settings)
+
+        assert result["r"] == 2.0
+        assert result["hr"] == 1.5
+        assert result["rbi"] == 1.0
+        assert result["sb"] == 0.5
+        assert result["avg"] == 0.0
+
+    def test_multiple_players_sums(self, session, settings):
+        """Test that SGP from multiple players sums correctly."""
+        from src.database import Team, DraftPick
+
+        # Create team first
+        team = Team(name="Test", budget=260, is_user_team=True)
+        session.add(team)
+        session.commit()
+
+        # Create picks
+        pick1 = DraftPick(team_id=team.id, price=10, pick_number=1)
+        pick2 = DraftPick(team_id=team.id, price=10, pick_number=2)
+        session.add_all([pick1, pick2])
+        session.commit()
+
+        # Create two players linked to picks
+        player1 = Player(
+            name="Hitter 1",
+            player_type="hitter",
+            sgp=3.0,
+            sgp_breakdown={"r": 1.0, "hr": 1.0, "rbi": 1.0, "sb": 0, "avg": 0},
+            draft_pick_id=pick1.id,
+            is_drafted=True,
+        )
+        player2 = Player(
+            name="Hitter 2",
+            player_type="hitter",
+            sgp=2.0,
+            sgp_breakdown={"r": 0.5, "hr": 0.5, "rbi": 0.5, "sb": 0.5, "avg": 0},
+            draft_pick_id=pick2.id,
+            is_drafted=True,
+        )
+        session.add_all([player1, player2])
+        session.commit()
+
+        session.refresh(team)
+
+        result = calculate_team_category_sgp(team.draft_picks, settings)
+
+        assert result["r"] == 1.5
+        assert result["hr"] == 1.5
+        assert result["rbi"] == 1.5
+        assert result["sb"] == 0.5
+
+
+class TestTeamRawStats:
+    """Tests for the calculate_team_raw_stats function."""
+
+    def test_counting_stats_sum(self, session, settings):
+        """Test that counting stats sum correctly."""
+        from src.database import Team, DraftPick
+
+        # Create team
+        team = Team(name="Test", budget=260, is_user_team=True)
+        session.add(team)
+        session.commit()
+
+        # Create picks
+        pick1 = DraftPick(team_id=team.id, price=10, pick_number=1)
+        pick2 = DraftPick(team_id=team.id, price=10, pick_number=2)
+        session.add_all([pick1, pick2])
+        session.commit()
+
+        # Create players linked to picks
+        player1 = Player(
+            name="Hitter 1", player_type="hitter",
+            r=80, hr=25, rbi=70, sb=10, ab=500, h=150, avg=0.300,
+            draft_pick_id=pick1.id, is_drafted=True,
+        )
+        player2 = Player(
+            name="Hitter 2", player_type="hitter",
+            r=60, hr=15, rbi=50, sb=20, ab=400, h=120, avg=0.300,
+            draft_pick_id=pick2.id, is_drafted=True,
+        )
+        session.add_all([player1, player2])
+        session.commit()
+
+        session.refresh(team)
+
+        result = calculate_team_raw_stats(team.draft_picks, settings)
+
+        assert result["r"] == 140
+        assert result["hr"] == 40
+        assert result["rbi"] == 120
+        assert result["sb"] == 30
+
+    def test_avg_is_weighted(self, session, settings):
+        """Test that AVG is calculated as team average (total H / total AB)."""
+        from src.database import Team, DraftPick
+
+        # Create team
+        team = Team(name="Test", budget=260, is_user_team=True)
+        session.add(team)
+        session.commit()
+
+        # Create picks
+        pick1 = DraftPick(team_id=team.id, price=10, pick_number=1)
+        pick2 = DraftPick(team_id=team.id, price=10, pick_number=2)
+        session.add_all([pick1, pick2])
+        session.commit()
+
+        # Player 1: 200 AB, 60 H (.300)
+        # Player 2: 400 AB, 100 H (.250)
+        # Team: 600 AB, 160 H (.267)
+        player1 = Player(
+            name="High AVG", player_type="hitter",
+            r=50, hr=10, rbi=40, sb=5, ab=200, h=60, avg=0.300,
+            draft_pick_id=pick1.id, is_drafted=True,
+        )
+        player2 = Player(
+            name="Low AVG", player_type="hitter",
+            r=70, hr=20, rbi=60, sb=10, ab=400, h=100, avg=0.250,
+            draft_pick_id=pick2.id, is_drafted=True,
+        )
+        session.add_all([player1, player2])
+        session.commit()
+
+        session.refresh(team)
+
+        result = calculate_team_raw_stats(team.draft_picks, settings)
+
+        # 160 / 600 = 0.2667
+        assert abs(result["avg"] - 0.2667) < 0.001
+
+    def test_pitcher_ratio_weighted_by_ip(self, session, settings):
+        """Test that ERA/WHIP are weighted by IP."""
+        from src.database import Team, DraftPick
+
+        # Create team
+        team = Team(name="Test", budget=260, is_user_team=True)
+        session.add(team)
+        session.commit()
+
+        # Create picks
+        pick1 = DraftPick(team_id=team.id, price=10, pick_number=1)
+        pick2 = DraftPick(team_id=team.id, price=10, pick_number=2)
+        session.add_all([pick1, pick2])
+        session.commit()
+
+        # Player 1: 100 IP, 2.00 ERA, 1.00 WHIP
+        # Player 2: 100 IP, 4.00 ERA, 1.20 WHIP
+        # Team: 200 IP, 3.00 ERA, 1.10 WHIP
+        player1 = Player(
+            name="Ace", player_type="pitcher",
+            w=10, sv=0, k=100, ip=100, era=2.00, whip=1.00,
+            draft_pick_id=pick1.id, is_drafted=True,
+        )
+        player2 = Player(
+            name="Average", player_type="pitcher",
+            w=8, sv=0, k=80, ip=100, era=4.00, whip=1.20,
+            draft_pick_id=pick2.id, is_drafted=True,
+        )
+        session.add_all([player1, player2])
+        session.commit()
+
+        session.refresh(team)
+
+        result = calculate_team_raw_stats(team.draft_picks, settings)
+
+        assert abs(result["era"] - 3.00) < 0.01
+        assert abs(result["whip"] - 1.10) < 0.01
+        assert result["w"] == 18
+        assert result["k"] == 180
+
+
+class TestAnalyzeTeamCategoryBalance:
+    """Tests for the analyze_team_category_balance function."""
+
+    def test_returns_all_required_keys(self, session, settings):
+        """Test that analysis returns all expected keys."""
+        from src.database import Team, DraftPick
+
+        # Create team
+        team = Team(name="Test", budget=260, is_user_team=True)
+        session.add(team)
+        session.commit()
+
+        # Create pick
+        pick = DraftPick(team_id=team.id, price=10, pick_number=1)
+        session.add(pick)
+        session.commit()
+
+        # Create player linked to pick
+        player = Player(
+            name="Test Player", player_type="hitter",
+            r=80, hr=25, rbi=70, sb=10, ab=500, h=150, avg=0.300,
+            sgp=3.0, sgp_breakdown={"r": 1.0, "hr": 1.0, "rbi": 1.0, "sb": 0, "avg": 0},
+            draft_pick_id=pick.id, is_drafted=True,
+        )
+        session.add(player)
+        session.commit()
+
+        session.refresh(team)
+
+        analysis = analyze_team_category_balance(team.draft_picks, settings)
+
+        assert "sgp_totals" in analysis
+        assert "raw_stats" in analysis
+        assert "standings" in analysis
+        assert "recommendations" in analysis
+        assert "hitting_cats" in analysis
+        assert "pitching_cats" in analysis
+        assert "num_teams" in analysis
+
+    def test_weak_category_generates_recommendation(self, session, settings):
+        """Test that weak categories generate recommendations."""
+        from src.database import Team, DraftPick
+
+        # Create team
+        team = Team(name="Test", budget=260, is_user_team=True)
+        session.add(team)
+        session.commit()
+
+        # Create pick
+        pick = DraftPick(team_id=team.id, price=10, pick_number=1)
+        session.add(pick)
+        session.commit()
+
+        # Player with strong R but very weak SB
+        player = Player(
+            name="No Speed", player_type="hitter",
+            r=100, hr=35, rbi=100, sb=0, ab=550, h=165, avg=0.300,
+            sgp=5.0, sgp_breakdown={"r": 3.0, "hr": 2.0, "rbi": 2.0, "sb": -2.0, "avg": 0},
+            draft_pick_id=pick.id, is_drafted=True,
+        )
+        session.add(player)
+        session.commit()
+
+        session.refresh(team)
+
+        analysis = analyze_team_category_balance(team.draft_picks, settings)
+
+        # Should have a recommendation for SB
+        sb_recs = [r for r in analysis["recommendations"] if r["category"] == "SB"]
+        assert len(sb_recs) > 0
+
+    def test_empty_roster_returns_average_standings(self, settings):
+        """Test that empty roster returns middle standings."""
+        analysis = analyze_team_category_balance([], settings)
+
+        # All standings should be around middle (6-7 for 12 teams)
+        for cat, pos in analysis["standings"].items():
+            assert 5 <= pos <= 8

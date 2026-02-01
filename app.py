@@ -2,6 +2,7 @@
 
 import streamlit as st
 import pandas as pd
+import altair as alt
 from pathlib import Path
 
 from src.database import init_db, get_session, Player, Team, DraftState, TargetPlayer
@@ -12,7 +13,12 @@ from src.projections import (
     get_available_players,
 )
 from src.settings import DEFAULT_SETTINGS, LeagueSettings
-from src.values import calculate_all_player_values, calculate_remaining_player_values, calculate_category_surplus
+from src.values import (
+    calculate_all_player_values,
+    calculate_remaining_player_values,
+    calculate_category_surplus,
+    analyze_team_category_balance,
+)
 from src.draft import (
     initialize_draft,
     draft_player,
@@ -1028,6 +1034,196 @@ def style_surplus(val):
         return 'background-color: #FFB6C1'  # Light pink/red (significant overpay)
 
 
+def create_category_bar_chart(analysis: dict) -> alt.Chart:
+    """
+    Create Altair horizontal bar chart with color-coded strength.
+
+    Colors:
+        - Green (#90EE90): Projected 1-4 (strong)
+        - Yellow (#FFFFE0): Projected 5-8 (average)
+        - Red (#FFB6C1): Projected 9-12 (weak)
+
+    Args:
+        analysis: Result from analyze_team_category_balance()
+
+    Returns:
+        Altair chart object
+    """
+    standings = analysis["standings"]
+    sgp_totals = analysis["sgp_totals"]
+    num_teams = analysis["num_teams"]
+    hitting_cats = analysis["hitting_cats"]
+    pitching_cats = analysis["pitching_cats"]
+
+    # Build data for chart
+    data = []
+    for cat in hitting_cats + pitching_cats:
+        position = standings.get(cat, num_teams // 2)
+        sgp = sgp_totals.get(cat, 0)
+
+        # Determine color based on position
+        if position <= 4:
+            color = "Strong"
+        elif position <= 8:
+            color = "Average"
+        else:
+            color = "Weak"
+
+        # Determine category type
+        cat_type = "Hitting" if cat in hitting_cats else "Pitching"
+
+        data.append({
+            "Category": cat.upper(),
+            "Position": position,
+            "SGP": round(sgp, 1),
+            "Strength": color,
+            "Type": cat_type,
+            # For bar length, use inverse of position (so better = longer bar)
+            "Bar": num_teams - position + 1,
+        })
+
+    df = pd.DataFrame(data)
+
+    # Define color scale
+    color_scale = alt.Scale(
+        domain=["Strong", "Average", "Weak"],
+        range=["#90EE90", "#FFFFE0", "#FFB6C1"]
+    )
+
+    # Create chart
+    chart = alt.Chart(df).mark_bar().encode(
+        y=alt.Y("Category:N", sort=None, title=None),
+        x=alt.X("Bar:Q", scale=alt.Scale(domain=[0, num_teams]), title="Projected Standing"),
+        color=alt.Color("Strength:N", scale=color_scale, legend=alt.Legend(title="Strength")),
+        tooltip=[
+            alt.Tooltip("Category:N", title="Category"),
+            alt.Tooltip("Position:Q", title="Projected Rank"),
+            alt.Tooltip("SGP:Q", title="Total SGP"),
+            alt.Tooltip("Strength:N", title="Strength"),
+        ]
+    ).properties(
+        height=250
+    )
+
+    # Add text labels
+    text = alt.Chart(df).mark_text(
+        align="left",
+        baseline="middle",
+        dx=5,
+        fontSize=11,
+    ).encode(
+        y=alt.Y("Category:N", sort=None),
+        x=alt.X("Bar:Q"),
+        text=alt.Text("Position:Q", format=".0f"),
+    )
+
+    return chart + text
+
+
+def render_category_balance_dashboard(analysis: dict, settings) -> None:
+    """
+    Render the complete Category Balance Dashboard.
+
+    Args:
+        analysis: Result from analyze_team_category_balance()
+        settings: League settings
+    """
+    standings = analysis["standings"]
+    sgp_totals = analysis["sgp_totals"]
+    raw_stats = analysis["raw_stats"]
+    recommendations = analysis["recommendations"]
+    hitting_cats = analysis["hitting_cats"]
+    pitching_cats = analysis["pitching_cats"]
+    num_teams = analysis["num_teams"]
+
+    # Create two columns for hitting and pitching
+    col1, col2 = st.columns(2)
+
+    with col1:
+        st.markdown("**Hitting Categories**")
+
+        # Build hitting data
+        hitting_data = []
+        for cat in hitting_cats:
+            pos = standings.get(cat, num_teams // 2)
+            sgp = sgp_totals.get(cat, 0)
+            raw = raw_stats.get(cat, 0)
+
+            # Format raw stat
+            if cat == "avg":
+                raw_display = f"{raw:.3f}" if raw > 0 else ".000"
+            else:
+                raw_display = f"{int(raw)}"
+
+            # Determine indicator
+            if pos <= 4:
+                indicator = ""
+            elif pos <= 8:
+                indicator = ""
+            else:
+                indicator = " !!"
+
+            hitting_data.append({
+                "Cat": cat.upper(),
+                "Rank": f"{pos}th",
+                "SGP": f"{sgp:+.1f}",
+                "Projected": raw_display,
+                "Status": indicator,
+            })
+
+        hitting_df = pd.DataFrame(hitting_data)
+        st.dataframe(hitting_df, hide_index=True, use_container_width=True)
+
+    with col2:
+        st.markdown("**Pitching Categories**")
+
+        # Build pitching data
+        pitching_data = []
+        for cat in pitching_cats:
+            pos = standings.get(cat, num_teams // 2)
+            sgp = sgp_totals.get(cat, 0)
+            raw = raw_stats.get(cat, 0)
+
+            # Format raw stat
+            if cat in ["era", "whip"]:
+                raw_display = f"{raw:.2f}" if raw > 0 else "0.00"
+            else:
+                raw_display = f"{int(raw)}"
+
+            # Determine indicator
+            if pos <= 4:
+                indicator = ""
+            elif pos <= 8:
+                indicator = ""
+            else:
+                indicator = " !!"
+
+            pitching_data.append({
+                "Cat": cat.upper(),
+                "Rank": f"{pos}th",
+                "SGP": f"{sgp:+.1f}",
+                "Projected": raw_display,
+                "Status": indicator,
+            })
+
+        pitching_df = pd.DataFrame(pitching_data)
+        st.dataframe(pitching_df, hide_index=True, use_container_width=True)
+
+    # Visual chart
+    st.markdown("**Projected Standings by Category**")
+    chart = create_category_bar_chart(analysis)
+    st.altair_chart(chart, use_container_width=True)
+
+    # Recommendations
+    if recommendations:
+        st.markdown("**Recommendations**")
+        for rec in recommendations:
+            if rec["priority"] == "high":
+                st.warning(f"! {rec['message']}")
+            else:
+                st.info(f"Consider: {rec['message']}")
+
+
 def show_my_team(session):
     """Display the user's team roster and stats."""
     st.header("My Team")
@@ -1155,6 +1351,21 @@ def show_my_team(session):
                 for i, cat in enumerate(pitcher_cats):
                     val = pitcher_totals[cat]
                     pcols[i].metric(cat.upper(), f"{val:+.1f}")
+
+        # Category Balance Dashboard
+        st.divider()
+        with st.expander("Category Balance Dashboard", expanded=True):
+            if len(picks) >= 1:
+                settings = get_current_settings()
+                analysis = analyze_team_category_balance(picks, settings)
+
+                # Show early projection disclaimer for small rosters
+                if len(picks) <= 2:
+                    st.info("(Early projection - based on limited roster data)")
+
+                render_category_balance_dashboard(analysis, settings)
+            else:
+                st.info("Draft players to see category balance analysis")
 
 
 def show_all_teams(session):

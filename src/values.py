@@ -478,3 +478,209 @@ def calculate_category_surplus(player: Player, price_paid: int) -> dict[str, flo
         cat: (cat_sgp / total_sgp) * total_surplus
         for cat, cat_sgp in player.sgp_breakdown.items()
     }
+
+
+def calculate_team_category_sgp(picks: list, settings: LeagueSettings = None) -> dict[str, float]:
+    """
+    Sum SGP per category for all team players.
+
+    Args:
+        picks: List of DraftPick objects (from team.draft_picks)
+        settings: League settings (uses DEFAULT_SETTINGS if None)
+
+    Returns:
+        Dict mapping category names (lowercase) to total SGP
+    """
+    if settings is None:
+        settings = DEFAULT_SETTINGS
+
+    hitting_cats = [c.lower() for c in settings.hitting_categories]
+    pitching_cats = [c.lower() for c in settings.pitching_categories]
+    all_cats = hitting_cats + pitching_cats
+
+    # Initialize totals
+    totals = {cat: 0.0 for cat in all_cats}
+
+    for pick in picks:
+        player = pick.player
+        if player and player.sgp_breakdown:
+            for cat, sgp in player.sgp_breakdown.items():
+                if cat in totals:
+                    totals[cat] += sgp
+
+    return totals
+
+
+def calculate_team_raw_stats(picks: list, settings: LeagueSettings = None) -> dict[str, float]:
+    """
+    Sum raw stat projections (counting) or weighted avg (ratio stats).
+
+    Args:
+        picks: List of DraftPick objects (from team.draft_picks)
+        settings: League settings (uses DEFAULT_SETTINGS if None)
+
+    Returns:
+        Dict mapping category names (lowercase) to total/weighted stats
+    """
+    if settings is None:
+        settings = DEFAULT_SETTINGS
+
+    hitting_cats = [c.lower() for c in settings.hitting_categories]
+    pitching_cats = [c.lower() for c in settings.pitching_categories]
+
+    stats = {}
+    total_ab = 0
+    total_h = 0
+    total_ip = 0
+    weighted_era = 0
+    weighted_whip = 0
+
+    for pick in picks:
+        player = pick.player
+        if not player:
+            continue
+
+        if player.player_type == "hitter":
+            # Counting stats
+            for cat in hitting_cats:
+                if cat in HITTER_COUNTING_STATS:
+                    stats[cat] = stats.get(cat, 0) + (getattr(player, cat, 0) or 0)
+
+            # Track AB/H for AVG calculation
+            ab = getattr(player, "ab", 0) or 0
+            h = getattr(player, "h", 0) or 0
+            total_ab += ab
+            total_h += h
+
+        elif player.player_type == "pitcher":
+            # Counting stats
+            for cat in pitching_cats:
+                if cat in PITCHER_COUNTING_STATS:
+                    stats[cat] = stats.get(cat, 0) + (getattr(player, cat, 0) or 0)
+
+            # Track IP-weighted ERA/WHIP
+            ip = getattr(player, "ip", 0) or 0
+            era = getattr(player, "era", 0) or 0
+            whip = getattr(player, "whip", 0) or 0
+            total_ip += ip
+            weighted_era += era * ip
+            weighted_whip += whip * ip
+
+    # Calculate team AVG
+    if total_ab > 0:
+        stats["avg"] = total_h / total_ab
+    else:
+        stats["avg"] = 0.0
+
+    # Calculate team ERA/WHIP (weighted by IP)
+    if total_ip > 0:
+        stats["era"] = weighted_era / total_ip
+        stats["whip"] = weighted_whip / total_ip
+    else:
+        stats["era"] = 0.0
+        stats["whip"] = 0.0
+
+    return stats
+
+
+def estimate_standings_position(category_sgp: float, num_teams: int = 12, sgp_spread: float = 2.0) -> int:
+    """
+    Convert SGP to projected standings position (1=best, 12=worst).
+
+    Uses the formula: position = max(1, min(num_teams, round(num_teams/2 - sgp/spread)))
+
+    The sgp_spread parameter represents how many SGP points separate each place
+    in the standings on average. A smaller spread means SGP has more impact.
+
+    Args:
+        category_sgp: Total SGP for this category
+        num_teams: Number of teams in the league
+        sgp_spread: SGP points between standings positions (default 2.0)
+
+    Returns:
+        Projected standings position (1 = best, num_teams = worst)
+    """
+    # Middle position is the baseline (average)
+    middle = num_teams / 2 + 0.5  # 6.5 for 12 teams
+
+    # Calculate position offset from SGP
+    # Positive SGP = better position (lower number)
+    offset = category_sgp / sgp_spread
+
+    position = round(middle - offset)
+
+    # Clamp to valid range
+    return max(1, min(num_teams, position))
+
+
+def analyze_team_category_balance(picks: list, settings: LeagueSettings = None) -> dict:
+    """
+    Return complete analysis with SGP totals, rankings, and recommendations.
+
+    Args:
+        picks: List of DraftPick objects (from team.draft_picks)
+        settings: League settings (uses DEFAULT_SETTINGS if None)
+
+    Returns:
+        Dict with keys:
+            - sgp_totals: Dict of category -> total SGP
+            - raw_stats: Dict of category -> raw stat totals
+            - standings: Dict of category -> projected position (1-12)
+            - recommendations: List of dicts with weak categories to target
+            - hitting_cats: List of hitting category names
+            - pitching_cats: List of pitching category names
+    """
+    if settings is None:
+        settings = DEFAULT_SETTINGS
+
+    num_teams = settings.num_teams
+    hitting_cats = [c.lower() for c in settings.hitting_categories]
+    pitching_cats = [c.lower() for c in settings.pitching_categories]
+
+    # Calculate SGP totals and raw stats
+    sgp_totals = calculate_team_category_sgp(picks, settings)
+    raw_stats = calculate_team_raw_stats(picks, settings)
+
+    # Estimate standings positions
+    standings = {}
+    for cat in hitting_cats + pitching_cats:
+        sgp = sgp_totals.get(cat, 0)
+        standings[cat] = estimate_standings_position(sgp, num_teams)
+
+    # Generate recommendations for weak categories
+    recommendations = []
+    for cat in hitting_cats + pitching_cats:
+        position = standings[cat]
+        sgp = sgp_totals.get(cat, 0)
+
+        if position >= 9:
+            # Weak category (9-12)
+            recommendations.append({
+                "category": cat.upper(),
+                "position": position,
+                "sgp": sgp,
+                "priority": "high",
+                "message": f"Target {cat.upper()} - projected {position}th (weak)",
+            })
+        elif position >= 7:
+            # Below average (7-8)
+            recommendations.append({
+                "category": cat.upper(),
+                "position": position,
+                "sgp": sgp,
+                "priority": "medium",
+                "message": f"Consider {cat.upper()} - projected {position}th (below average)",
+            })
+
+    # Sort recommendations by position (worst first)
+    recommendations.sort(key=lambda x: x["position"], reverse=True)
+
+    return {
+        "sgp_totals": sgp_totals,
+        "raw_stats": raw_stats,
+        "standings": standings,
+        "recommendations": recommendations,
+        "hitting_cats": hitting_cats,
+        "pitching_cats": pitching_cats,
+        "num_teams": num_teams,
+    }
