@@ -39,6 +39,79 @@ def get_db():
     return engine
 
 
+def auto_load_data(session) -> bool:
+    """
+    Auto-load CSV data from the data folder if database is empty.
+
+    Looks for hitter and pitcher CSVs in the data folder and imports them
+    if the database has no players. Also calculates values after import.
+
+    Returns:
+        True if data was auto-loaded, False otherwise
+    """
+    # Skip if already checked this session
+    if st.session_state.get("data_auto_loaded"):
+        return False
+
+    # Check if database already has players
+    player_count = session.query(Player).count()
+    if player_count > 0:
+        st.session_state.data_auto_loaded = True
+        return False
+
+    # Look for CSV files in data folder
+    data_dir = Path("data")
+    if not data_dir.exists():
+        st.session_state.data_auto_loaded = True
+        return False
+
+    # Find hitter and pitcher CSV files
+    hitter_csv = None
+    pitcher_csv = None
+
+    for csv_file in data_dir.glob("*.csv"):
+        name_lower = csv_file.name.lower()
+        if "batter" in name_lower or "hitter" in name_lower:
+            hitter_csv = csv_file
+        elif "pitcher" in name_lower:
+            pitcher_csv = csv_file
+
+    if not hitter_csv and not pitcher_csv:
+        st.session_state.data_auto_loaded = True
+        return False
+
+    # Import the data
+    imported = False
+
+    if hitter_csv:
+        try:
+            count = import_hitters_csv(session, hitter_csv)
+            st.toast(f"Auto-loaded {count} hitters from {hitter_csv.name}")
+            imported = True
+        except Exception as e:
+            st.warning(f"Failed to auto-load hitters: {e}")
+
+    if pitcher_csv:
+        try:
+            count = import_pitchers_csv(session, pitcher_csv)
+            st.toast(f"Auto-loaded {count} pitchers from {pitcher_csv.name}")
+            imported = True
+        except Exception as e:
+            st.warning(f"Failed to auto-load pitchers: {e}")
+
+    # Calculate values if we imported data
+    if imported:
+        try:
+            settings = get_current_settings()
+            calculate_all_player_values(session, settings)
+            st.toast("Calculated player values")
+        except Exception as e:
+            st.warning(f"Failed to calculate values: {e}")
+
+    st.session_state.data_auto_loaded = True
+    return imported
+
+
 def get_current_settings() -> LeagueSettings:
     """
     Get current league settings from session state.
@@ -69,6 +142,9 @@ def main():
     """Main application."""
     engine = get_db()
     session = get_session(engine)
+
+    # Auto-load data from CSVs in data folder if database is empty
+    auto_load_data(session)
 
     st.title("⚾ Fantasy Baseball Auction Draft Tool")
 
@@ -392,6 +468,12 @@ def show_draft_room(session):
             disabled=(player_type == "All"),
             help="Available when viewing Hitters or Pitchers only",
         )
+        show_raw_stats = st.checkbox(
+            "Show Raw Stats",
+            key="show_raw_stats",
+            disabled=(player_type == "All"),
+            help="Show projected stats (R, HR, etc.) alongside values",
+        )
 
     # Build query for available players
     query = session.query(Player).filter(Player.is_drafted == False)
@@ -426,14 +508,29 @@ def show_draft_room(session):
                 "Value": f"${p.dollar_value:.0f}" if p.dollar_value else "-",
             }
 
+            # Add raw stats columns if toggle is enabled and not viewing "All"
+            if show_raw_stats and player_type != "All":
+                if player_type == "Hitters":
+                    row["R"] = int(p.r or 0)
+                    row["HR"] = int(p.hr or 0)
+                    row["RBI"] = int(p.rbi or 0)
+                    row["SB"] = int(p.sb or 0)
+                    row["AVG"] = f"{p.avg:.3f}" if p.avg else ".000"
+                elif player_type == "Pitchers":
+                    row["W"] = int(p.w or 0)
+                    row["SV"] = int(p.sv or 0)
+                    row["K"] = int(p.k or 0)
+                    row["ERA"] = round(p.era, 2) if p.era else 0.00
+                    row["WHIP"] = round(p.whip, 2) if p.whip else 0.00
+
             # Add category SGP columns if toggle is enabled and not viewing "All"
             if show_category_sgp and player_type != "All" and p.sgp_breakdown:
                 if player_type == "Hitters":
                     for cat in ["r", "hr", "rbi", "sb", "avg"]:
-                        row[cat.upper()] = round(p.sgp_breakdown.get(cat, 0), 2)
+                        row[f"{cat.upper()} SGP"] = round(p.sgp_breakdown.get(cat, 0), 2)
                 elif player_type == "Pitchers":
                     for cat in ["w", "sv", "k", "era", "whip"]:
-                        row[cat.upper()] = round(p.sgp_breakdown.get(cat, 0), 2)
+                        row[f"{cat.upper()} SGP"] = round(p.sgp_breakdown.get(cat, 0), 2)
 
             rows.append(row)
 

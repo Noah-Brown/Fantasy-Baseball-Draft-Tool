@@ -54,19 +54,32 @@ def import_hitters_csv(session: Session, csv_path: str | Path) -> int:
 
     count = 0
     for _, row in df.iterrows():
+        pa = _safe_float(row.get("PA"))
+        ab = _safe_float(row.get("AB"))
+        h = _safe_float(row.get("H"))
+        avg = _safe_float(row.get("AVG"))
+
+        # If AB is not provided, estimate from PA (typical walk/HBP/sac rate is ~14%)
+        if ab is None and pa is not None:
+            ab = pa * 0.86
+
+        # If H is not provided, calculate from AB and AVG
+        if h is None and ab is not None and avg is not None:
+            h = ab * avg
+
         player = Player(
             name=row.get("Name", ""),
             team=row.get("Team", ""),
             positions=_extract_positions(row),
             player_type="hitter",
-            pa=_safe_float(row.get("PA")),
-            ab=_safe_float(row.get("AB")),
-            h=_safe_float(row.get("H")),
+            pa=pa,
+            ab=ab,
+            h=h,
             r=_safe_float(row.get("R")),
             hr=_safe_float(row.get("HR")),
             rbi=_safe_float(row.get("RBI")),
             sb=_safe_float(row.get("SB")),
-            avg=_safe_float(row.get("AVG")),
+            avg=avg,
             obp=_safe_float(row.get("OBP")),
             slg=_safe_float(row.get("SLG")),
         )
