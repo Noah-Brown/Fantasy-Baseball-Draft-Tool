@@ -92,17 +92,25 @@ The Fantasy Baseball Draft Tool is a local Streamlit application for managing fa
 │                │ │              │ │                │
 │ - CSV import   │ │ - Draft mgmt │ │ - League config│
 │ - Player query │ │ - Team mgmt  │ │ - Roster spots │
-└───────┬────────┘ └──────┬───────┘ └────────────────┘
-        │                 │
-        │    ┌────────────┴────────────┐
-        │    │                         │
-        v    v                         v
+└───────┬────────┘ └──────┬───────┘ └───────┬────────┘
+        │                 │                 │
+        │    ┌────────────┴────────────┐    │
+        │    │                         │    │
+        v    v                         v    v
 ┌────────────────┐             ┌──────────────┐
 │  database.py   │◄────────────│   values.py  │
 │                │             │              │
 │ - ORM models   │             │ - SGP calc   │
 │ - DB session   │             │ - Dollar val │
-└────────────────┘             └──────────────┘
+└───────┬────────┘             └──────────────┘
+        │
+        v
+┌────────────────┐
+│  positions.py  │
+│                │
+│ - CI/MI logic  │
+│ - Eligibility  │
+└────────────────┘
 ```
 
 ### Module Responsibilities
@@ -114,6 +122,7 @@ The Fantasy Baseball Draft Tool is a local Streamlit application for managing fa
 | **Settings** | `src/settings.py` | League configuration dataclass, roster structure, budget allocation |
 | **Draft** | `src/draft.py` | Draft state management, team operations, pick tracking, undo functionality |
 | **Values** | `src/values.py` | SGP calculation engine, dollar value conversion, value recalculation |
+| **Positions** | `src/positions.py` | Position constants, composite position handling (CI/MI), eligibility checking |
 | **App** | `app.py` | Streamlit UI, page routing, session state management |
 
 ---
@@ -195,6 +204,8 @@ class LeagueSettings:
     min_bid: int = 1
     roster_spots: dict = {
         "C": 1, "1B": 1, "2B": 1, "3B": 1, "SS": 1,
+        "CI": 0,   # Corner Infielder (1B/3B)
+        "MI": 0,   # Middle Infielder (2B/SS)
         "OF": 3, "UTIL": 1,
         "SP": 2, "RP": 2, "P": 2, "BN": 3
     }
@@ -528,19 +539,21 @@ This ensures values reflect current scarcity and budget conditions.
 
 ### Roster Configuration
 
-| Position | Default Spots | Type |
-|----------|---------------|------|
-| C | 1 | Hitter |
-| 1B | 1 | Hitter |
-| 2B | 1 | Hitter |
-| 3B | 1 | Hitter |
-| SS | 1 | Hitter |
-| OF | 3 | Hitter |
-| UTIL | 1 | Hitter |
-| SP | 2 | Pitcher |
-| RP | 2 | Pitcher |
-| P | 2 | Pitcher (any) |
-| BN | 3 | Either |
+| Position | Default Spots | Type | Description |
+|----------|---------------|------|-------------|
+| C | 1 | Hitter | Catcher |
+| 1B | 1 | Hitter | First Base |
+| 2B | 1 | Hitter | Second Base |
+| 3B | 1 | Hitter | Third Base |
+| SS | 1 | Hitter | Shortstop |
+| CI | 0 | Hitter | Corner Infielder (1B or 3B eligible) |
+| MI | 0 | Hitter | Middle Infielder (2B or SS eligible) |
+| OF | 3 | Hitter | Outfielder |
+| UTIL | 1 | Hitter | Utility (any hitter) |
+| SP | 2 | Pitcher | Starting Pitcher |
+| RP | 2 | Pitcher | Relief Pitcher |
+| P | 2 | Pitcher | Pitcher (any pitcher) |
+| BN | 3 | Either | Bench |
 
 ### Scoring Categories
 
@@ -689,33 +702,64 @@ def calculate_category_surplus(
     """Distribute surplus across categories proportionally."""
 ```
 
+### positions.py
+
+```python
+# Position Constants
+COMPOSITE_POSITIONS = {
+    "CI": ["1B", "3B"],    # Corner Infielder
+    "MI": ["2B", "SS"],    # Middle Infielder
+    "UTIL": None,          # Any hitter (special handling)
+    "P": None,             # Any pitcher (special handling)
+}
+
+HITTER_ROSTER_POSITIONS = ["C", "1B", "2B", "3B", "SS", "CI", "MI", "OF", "UTIL"]
+PITCHER_ROSTER_POSITIONS = ["SP", "RP", "P"]
+ALL_FILTER_POSITIONS = ["C", "1B", "2B", "3B", "SS", "CI", "MI", "OF", "UTIL", "SP", "RP"]
+SCARCITY_POSITIONS = ["C", "1B", "2B", "3B", "SS", "CI", "MI", "OF", "SP", "RP"]
+
+def expand_position(position: str) -> list[str]
+    """Expand composite position to constituent base positions.
+    CI -> ["1B", "3B"], MI -> ["2B", "SS"], base positions -> [position]"""
+
+def can_player_fill_position(
+    player_positions: list[str],
+    roster_position: str,
+    player_type: str
+) -> bool
+    """Check if a player with given positions can fill a roster slot.
+    Handles UTIL, P, CI, MI, and base position eligibility."""
+```
+
 ---
 
 ## File Structure
 
 ```
 Fantasy-Baseball-Draft-Tool/
-├── app.py                    # Main Streamlit application (1132 lines)
+├── app.py                    # Main Streamlit application
 ├── requirements.txt          # Python dependencies
 ├── README.md                 # User documentation
 ├── PLAN.md                   # Development roadmap
 ├── ARCHITECTURE.md           # This file
 ├── src/
 │   ├── __init__.py
-│   ├── database.py           # SQLAlchemy ORM models (152 lines)
-│   ├── projections.py        # CSV import logic (224 lines)
-│   ├── settings.py           # League configuration (77 lines)
-│   ├── draft.py              # Draft management (314 lines)
-│   └── values.py             # SGP calculation engine (481 lines)
+│   ├── database.py           # SQLAlchemy ORM models
+│   ├── projections.py        # CSV import logic
+│   ├── settings.py           # League configuration
+│   ├── draft.py              # Draft management
+│   ├── values.py             # SGP calculation engine
+│   └── positions.py          # Position constants and CI/MI utilities
 ├── data/                     # CSV data storage (gitignored)
 │   └── .gitkeep
-├── tests/                    # Test suite (1582 lines total)
+├── tests/
 │   ├── conftest.py           # Pytest fixtures
 │   ├── test_database.py      # Database model tests
 │   ├── test_draft.py         # Draft operation tests
 │   ├── test_projections.py   # CSV import tests
 │   ├── test_settings.py      # Settings tests
-│   └── test_values.py        # SGP calculation tests
+│   ├── test_values.py        # SGP calculation tests
+│   └── test_positions.py     # Position utilities tests
 └── draft.db                  # SQLite database (created at runtime)
 ```
 
@@ -735,6 +779,7 @@ Test coverage by module:
 - `test_projections.py`: CSV parsing, column mapping
 - `test_settings.py`: Configuration validation
 - `test_values.py`: SGP calculations, edge cases
+- `test_positions.py`: Position expansion, CI/MI eligibility, composite positions
 
 ---
 
@@ -749,3 +794,6 @@ Test coverage by module:
 | **Ratio Stat** | Statistics where lower is better (ERA, WHIP) |
 | **5x5** | Standard rotisserie format with 5 hitting and 5 pitching categories |
 | **Surplus** | The difference between a player's calculated value and draft price |
+| **CI** | Corner Infielder - composite position accepting 1B or 3B eligible players |
+| **MI** | Middle Infielder - composite position accepting 2B or SS eligible players |
+| **Composite Position** | A roster slot that accepts multiple base positions (CI, MI, UTIL, P) |
