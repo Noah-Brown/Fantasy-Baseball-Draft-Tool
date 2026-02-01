@@ -38,7 +38,7 @@ A Streamlit-based application for managing fantasy baseball auction drafts with 
 2. Import projections:
    - Go to [Fangraphs Projections](https://www.fangraphs.com/projections)
    - Select **Steamer** as the projection system
-   - Download hitter and pitcher CSV files
+   - Download hitter and pitcher CSV files (Requires Fangraphs subscription) 
    - Upload them via the "Import Projections" page
 
 3. Browse players and configure league settings as needed.
