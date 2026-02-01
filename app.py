@@ -51,7 +51,7 @@ def main():
         st.header("Navigation")
         page = st.radio(
             "Select Page",
-            ["Player Database", "Draft Room", "Import Projections", "League Settings"],
+            ["Player Database", "Draft Room", "My Team", "All Teams", "Import Projections", "League Settings"],
             label_visibility="collapsed",
         )
 
@@ -69,6 +69,10 @@ def main():
         show_player_database(session)
     elif page == "Draft Room":
         show_draft_room(session)
+    elif page == "My Team":
+        show_my_team(session)
+    elif page == "All Teams":
+        show_all_teams(session)
     elif page == "Import Projections":
         show_import_page(session)
     elif page == "League Settings":
@@ -98,9 +102,11 @@ def show_player_database(session):
         )
 
     with col2:
-        position_filter = st.text_input(
-            "Position Filter",
-            placeholder="e.g., SS, OF, SP",
+        positions = st.multiselect(
+            "Positions",
+            ["C", "1B", "2B", "3B", "SS", "OF", "UTIL", "SP", "RP"],
+            default=[],
+            key="position_filter",
         )
 
     with col3:
@@ -117,8 +123,11 @@ def show_player_database(session):
     elif player_type == "Pitchers":
         query = query.filter(Player.player_type == "pitcher")
 
-    if position_filter:
-        query = query.filter(Player.positions.contains(position_filter.upper()))
+    if positions:
+        # Filter for players matching ANY of the selected positions
+        from sqlalchemy import or_
+        position_filters = [Player.positions.contains(pos) for pos in positions]
+        query = query.filter(or_(*position_filters))
 
     if search:
         query = query.filter(Player.name.ilike(f"%{search}%"))
@@ -343,9 +352,10 @@ def show_draft_room(session):
         )
 
     with col2:
-        position_filter = st.text_input(
-            "Position Filter",
-            placeholder="e.g., SS, OF, SP",
+        positions = st.multiselect(
+            "Positions",
+            ["C", "1B", "2B", "3B", "SS", "OF", "UTIL", "SP", "RP"],
+            default=[],
             key="avail_position",
         )
 
@@ -364,8 +374,11 @@ def show_draft_room(session):
     elif player_type == "Pitchers":
         query = query.filter(Player.player_type == "pitcher")
 
-    if position_filter:
-        query = query.filter(Player.positions.contains(position_filter.upper()))
+    if positions:
+        # Filter for players matching ANY of the selected positions
+        from sqlalchemy import or_
+        position_filters = [Player.positions.contains(pos) for pos in positions]
+        query = query.filter(or_(*position_filters))
 
     if search:
         query = query.filter(Player.name.ilike(f"%{search}%"))
@@ -393,6 +406,15 @@ def show_draft_room(session):
             hide_index=True,
         )
         st.caption(f"Showing top {len(available)} available players by value")
+
+        # Export available players
+        csv = df.to_csv(index=False)
+        st.download_button(
+            label="Export Available Players to CSV",
+            data=csv,
+            file_name="available_players.csv",
+            mime="text/csv",
+        )
     else:
         st.info("No available players match the current filters.")
 
@@ -424,8 +446,203 @@ def show_draft_room(session):
 
         if len(history) >= 20:
             st.caption("Showing last 20 picks")
+
+        # Export draft history - get full history for export
+        full_history = get_draft_history(session)
+        history_rows = []
+        for pick in full_history:
+            player = session.get(Player, pick['player_id']) if pick['player_id'] else None
+            value = player.dollar_value if player and player.dollar_value else 0
+            surplus = value - pick['price']
+            history_rows.append({
+                "Pick #": pick['pick_number'],
+                "Player": pick['player_name'],
+                "Team": pick['team_name'],
+                "Pos": player.positions if player else "",
+                "Price": pick['price'],
+                "Value": round(value, 0),
+                "Surplus": round(surplus, 0),
+            })
+
+        if history_rows:
+            history_df = pd.DataFrame(history_rows)
+            csv = history_df.to_csv(index=False)
+            st.download_button(
+                label="Export Draft History to CSV",
+                data=csv,
+                file_name="draft_history.csv",
+                mime="text/csv",
+            )
     else:
         st.info("No picks yet. Start drafting!")
+
+
+def style_surplus(val):
+    """Apply color styling based on surplus value."""
+    if pd.isna(val):
+        return ''
+    if val >= 5:
+        return 'background-color: #90EE90'  # Light green (great deal)
+    elif val >= 1:
+        return 'background-color: #98FB98'  # Pale green (good deal)
+    elif val >= -4:
+        return 'background-color: #FFFFE0'  # Light yellow (fair/slight overpay)
+    else:
+        return 'background-color: #FFB6C1'  # Light pink/red (significant overpay)
+
+
+def show_my_team(session):
+    """Display the user's team roster and stats."""
+    st.header("My Team")
+
+    draft_state = get_draft_state(session)
+    if not draft_state or not draft_state.is_active:
+        st.info("Start a draft first to see your team. Go to Draft Room to begin.")
+        return
+
+    user_team = get_user_team(session)
+    if not user_team:
+        st.warning("No user team found.")
+        return
+
+    # Summary metrics at top
+    col1, col2, col3 = st.columns(3)
+    col1.metric("Spent", f"${user_team.spent}")
+    col2.metric("Remaining", f"${user_team.remaining_budget}")
+    col3.metric("Players", user_team.roster_count)
+
+    st.divider()
+
+    # Get drafted players via DraftPick relationship
+    picks = user_team.draft_picks
+    if not picks:
+        st.info("No players drafted yet. Go to Draft Room to start drafting!")
+        return
+
+    # Build dataframe with player info + value/price comparison
+    rows = []
+    for pick in picks:
+        player = pick.player
+        if player:
+            value = player.dollar_value or 0
+            surplus = value - pick.price
+            rows.append({
+                "Name": player.name,
+                "Pos": player.positions or "",
+                "MLB Team": player.team or "",
+                "Price": pick.price,
+                "Value": round(value, 0),
+                "Surplus": round(surplus, 0),
+            })
+
+    if rows:
+        df = pd.DataFrame(rows)
+
+        # Apply styling to Surplus column
+        styled_df = df.style.applymap(style_surplus, subset=['Surplus'])
+
+        st.dataframe(
+            styled_df,
+            use_container_width=True,
+            hide_index=True,
+        )
+
+        # Export button
+        csv = df.to_csv(index=False)
+        st.download_button(
+            label="Export My Team to CSV",
+            data=csv,
+            file_name="my_team.csv",
+            mime="text/csv",
+        )
+
+        # Summary stats
+        st.divider()
+        total_value = df['Value'].sum()
+        total_spent = df['Price'].sum()
+        total_surplus = df['Surplus'].sum()
+
+        st.subheader("Team Summary")
+        scol1, scol2, scol3 = st.columns(3)
+        scol1.metric("Total Value", f"${total_value:.0f}")
+        scol2.metric("Total Spent", f"${total_spent:.0f}")
+        scol3.metric("Total Surplus", f"${total_surplus:+.0f}")
+
+
+def show_all_teams(session):
+    """Display all teams and their rosters."""
+    st.header("All Teams")
+
+    draft_state = get_draft_state(session)
+    if not draft_state or not draft_state.is_active:
+        st.info("Start a draft first to see teams. Go to Draft Room to begin.")
+        return
+
+    teams = get_all_teams(session)
+    if not teams:
+        st.warning("No teams found.")
+        return
+
+    # Summary table
+    summary_data = []
+    for t in teams:
+        team_label = t.name
+        if t.is_user_team:
+            team_label += " (You)"
+        summary_data.append({
+            "Team": team_label,
+            "Spent": f"${t.spent}",
+            "Remaining": f"${t.remaining_budget}",
+            "Players": t.roster_count,
+        })
+
+    summary_df = pd.DataFrame(summary_data)
+    st.dataframe(summary_df, use_container_width=True, hide_index=True)
+
+    st.divider()
+
+    # Expandable detail sections for each team
+    for team in teams:
+        header_label = f"{team.name}"
+        if team.is_user_team:
+            header_label += " (You)"
+        header_label += f" - {team.roster_count} players"
+
+        with st.expander(header_label, expanded=team.is_user_team):
+            picks = team.draft_picks
+            if not picks:
+                st.info("No players drafted yet.")
+                continue
+
+            # Build roster dataframe
+            rows = []
+            for pick in picks:
+                player = pick.player
+                if player:
+                    value = player.dollar_value or 0
+                    surplus = value - pick.price
+                    rows.append({
+                        "Name": player.name,
+                        "Pos": player.positions or "",
+                        "MLB Team": player.team or "",
+                        "Price": pick.price,
+                        "Value": round(value, 0),
+                        "Surplus": round(surplus, 0),
+                    })
+
+            if rows:
+                df = pd.DataFrame(rows)
+                styled_df = df.style.applymap(style_surplus, subset=['Surplus'])
+                st.dataframe(
+                    styled_df,
+                    use_container_width=True,
+                    hide_index=True,
+                )
+
+                # Team totals
+                total_value = df['Value'].sum()
+                total_surplus = df['Surplus'].sum()
+                st.caption(f"Total Value: ${total_value:.0f} | Total Surplus: ${total_surplus:+.0f}")
 
 
 def show_import_page(session):
