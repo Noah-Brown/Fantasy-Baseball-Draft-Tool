@@ -19,6 +19,8 @@ class LeagueSettings:
         "2B": 1,
         "3B": 1,
         "SS": 1,
+        "CI": 0,   # Corner Infielder (1B/3B)
+        "MI": 0,   # Middle Infielder (2B/SS)
         "OF": 3,
         "UTIL": 1,
         "SP": 2,
@@ -47,8 +49,8 @@ class LeagueSettings:
     @property
     def hitter_roster_spots(self) -> int:
         """Number of hitter roster spots per team."""
-        hitter_positions = ["C", "1B", "2B", "3B", "SS", "OF", "UTIL"]
-        return sum(self.roster_spots.get(pos, 0) for pos in hitter_positions)
+        from .positions import HITTER_ROSTER_POSITIONS
+        return sum(self.roster_spots.get(pos, 0) for pos in HITTER_ROSTER_POSITIONS)
 
     @property
     def pitcher_roster_spots(self) -> int:

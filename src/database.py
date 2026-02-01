@@ -60,11 +60,8 @@ class Player(Base):
 
     def can_play(self, position: str) -> bool:
         """Check if player is eligible for a position."""
-        if position == "UTIL" and self.player_type == "hitter":
-            return True
-        if position == "P" and self.player_type == "pitcher":
-            return True
-        return position in self.position_list
+        from .positions import can_player_fill_position
+        return can_player_fill_position(self.position_list, position, self.player_type)
 
 
 class Team(Base):
