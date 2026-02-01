@@ -44,6 +44,11 @@ from src.targets import (
     get_available_targets_below_value,
 )
 from src.components import inject_keyboard_shortcuts, inject_keyboard_hint
+from src.positions import (
+    ALL_FILTER_POSITIONS,
+    HITTER_ROSTER_POSITIONS,
+    expand_position,
+)
 
 # Page configuration
 st.set_page_config(
@@ -233,7 +238,7 @@ def show_player_database(session):
     with col2:
         positions = st.multiselect(
             "Positions",
-            ["C", "1B", "2B", "3B", "SS", "OF", "UTIL", "SP", "RP"],
+            ALL_FILTER_POSITIONS,
             default=[],
             key="position_filter",
         )
@@ -255,8 +260,12 @@ def show_player_database(session):
 
     if positions:
         # Filter for players matching ANY of the selected positions
+        # Expand CI/MI to constituent positions for filtering
         from sqlalchemy import or_
-        position_filters = [Player.positions.contains(pos) for pos in positions]
+        expanded = set()
+        for pos in positions:
+            expanded.update(expand_position(pos) or [pos])
+        position_filters = [Player.positions.contains(p) for p in expanded]
         query = query.filter(or_(*position_filters))
 
     if search:
@@ -644,7 +653,7 @@ def show_draft_room(session):
     with col2:
         positions = st.multiselect(
             "Positions",
-            ["C", "1B", "2B", "3B", "SS", "OF", "UTIL", "SP", "RP"],
+            ALL_FILTER_POSITIONS,
             default=[],
             key="avail_position",
         )
@@ -680,8 +689,12 @@ def show_draft_room(session):
 
     if positions:
         # Filter for players matching ANY of the selected positions
+        # Expand CI/MI to constituent positions for filtering
         from sqlalchemy import or_
-        position_filters = [Player.positions.contains(pos) for pos in positions]
+        expanded = set()
+        for pos in positions:
+            expanded.update(expand_position(pos) or [pos])
+        position_filters = [Player.positions.contains(p) for p in expanded]
         query = query.filter(or_(*position_filters))
 
     if search:
@@ -1704,9 +1717,8 @@ def show_settings_page(session):
     # Hitter positions
     st.markdown("**Hitters**")
     hitter_cols = st.columns(4)
-    hitter_positions = ["C", "1B", "2B", "3B", "SS", "OF", "UTIL"]
 
-    for i, pos in enumerate(hitter_positions):
+    for i, pos in enumerate(HITTER_ROSTER_POSITIONS):
         with hitter_cols[i % 4]:
             current_val = st.session_state.league_settings["roster_spots"].get(pos, 0)
             new_val = st.number_input(

@@ -486,19 +486,32 @@ def get_position_scarcity(session: Session, settings: LeagueSettings = None, qua
             ...
         }
     """
+    from sqlalchemy import or_
+    from .positions import SCARCITY_POSITIONS, expand_position
+
     if settings is None:
         settings = DEFAULT_SETTINGS
 
-    positions = ["C", "1B", "2B", "3B", "SS", "OF", "SP", "RP"]
     scarcity = {}
 
-    for pos in positions:
-        # Query available quality players at this position
-        query = session.query(Player).filter(
-            Player.is_drafted == False,
-            Player.dollar_value >= quality_threshold,
-            Player.positions.contains(pos)
-        )
+    for pos in SCARCITY_POSITIONS:
+        base_positions = expand_position(pos)
+
+        if base_positions and pos in ["CI", "MI"]:
+            # Composite: OR logic across constituents
+            position_filters = [Player.positions.contains(bp) for bp in base_positions]
+            query = session.query(Player).filter(
+                Player.is_drafted == False,
+                Player.dollar_value >= quality_threshold,
+                or_(*position_filters)
+            )
+        else:
+            query = session.query(Player).filter(
+                Player.is_drafted == False,
+                Player.dollar_value >= quality_threshold,
+                Player.positions.contains(pos)
+            )
+
         quality_count = query.count()
 
         if quality_count <= 3:
