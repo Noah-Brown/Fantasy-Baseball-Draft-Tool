@@ -311,3 +311,153 @@ def get_remaining_budget(session: Session) -> int:
     """Get total remaining budget across all teams."""
     teams = get_all_teams(session)
     return sum(team.remaining_budget for team in teams)
+
+
+def get_team_roster_needs(session: Session, team: Team, settings: LeagueSettings = None) -> dict:
+    """
+    Calculate remaining roster slots needed for a specific team.
+
+    Args:
+        session: Database session
+        team: The team to check
+        settings: League settings
+
+    Returns:
+        Dict with roster info including spots needed by type
+    """
+    if settings is None:
+        settings = DEFAULT_SETTINGS
+
+    # Count drafted players by type for this team
+    drafted_hitters = 0
+    drafted_pitchers = 0
+
+    for pick in team.draft_picks:
+        player = session.query(Player).filter(Player.draft_pick_id == pick.id).first()
+        if player:
+            if player.player_type == "hitter":
+                drafted_hitters += 1
+            elif player.player_type == "pitcher":
+                drafted_pitchers += 1
+
+    total_hitter_spots = settings.hitter_roster_spots
+    total_pitcher_spots = settings.pitcher_roster_spots
+
+    hitters_needed = max(0, total_hitter_spots - drafted_hitters)
+    pitchers_needed = max(0, total_pitcher_spots - drafted_pitchers)
+    total_needed = hitters_needed + pitchers_needed
+
+    return {
+        "hitters_drafted": drafted_hitters,
+        "pitchers_drafted": drafted_pitchers,
+        "hitters_needed": hitters_needed,
+        "pitchers_needed": pitchers_needed,
+        "total_needed": total_needed,
+        "total_hitter_spots": total_hitter_spots,
+        "total_pitcher_spots": total_pitcher_spots,
+    }
+
+
+def calculate_max_bid(
+    session: Session,
+    team: Team,
+    settings: LeagueSettings = None
+) -> dict:
+    """
+    Calculate the maximum affordable bid for a team.
+
+    The max bid is calculated as:
+        remaining_budget - (remaining_roster_slots - 1) * min_bid
+
+    This ensures the team can fill remaining roster spots at minimum bid.
+
+    Args:
+        session: Database session
+        team: The team to calculate for
+        settings: League settings
+
+    Returns:
+        Dict with max bid info and breakdown
+    """
+    if settings is None:
+        settings = DEFAULT_SETTINGS
+
+    roster_needs = get_team_roster_needs(session, team, settings)
+    remaining_budget = team.remaining_budget
+    spots_needed = roster_needs["total_needed"]
+    min_bid = settings.min_bid
+
+    # If no spots needed, entire budget is available
+    if spots_needed <= 0:
+        max_bid = remaining_budget
+        reserved_for_roster = 0
+    else:
+        # Reserve min_bid for each remaining spot after this one
+        reserved_for_roster = (spots_needed - 1) * min_bid
+        max_bid = remaining_budget - reserved_for_roster
+
+    # Ensure max bid is at least min_bid (if they have budget)
+    if max_bid < min_bid and remaining_budget >= min_bid:
+        max_bid = min_bid
+
+    # Can't bid more than remaining budget
+    max_bid = min(max_bid, remaining_budget)
+
+    # Can't bid less than 0
+    max_bid = max(0, max_bid)
+
+    return {
+        "max_bid": max_bid,
+        "remaining_budget": remaining_budget,
+        "spots_needed": spots_needed,
+        "reserved_for_roster": reserved_for_roster,
+        "min_bid": min_bid,
+        "hitters_needed": roster_needs["hitters_needed"],
+        "pitchers_needed": roster_needs["pitchers_needed"],
+    }
+
+
+def calculate_bid_impact(
+    session: Session,
+    team: Team,
+    bid_amount: int,
+    settings: LeagueSettings = None
+) -> dict:
+    """
+    Calculate the impact of a specific bid on a team's remaining capacity.
+
+    Args:
+        session: Database session
+        team: The team considering the bid
+        bid_amount: The proposed bid amount
+        settings: League settings
+
+    Returns:
+        Dict with impact analysis
+    """
+    if settings is None:
+        settings = DEFAULT_SETTINGS
+
+    max_bid_info = calculate_max_bid(session, team, settings)
+    roster_needs = get_team_roster_needs(session, team, settings)
+
+    remaining_after_bid = team.remaining_budget - bid_amount
+    spots_after_bid = roster_needs["total_needed"] - 1  # Assuming this bid wins
+
+    if spots_after_bid > 0:
+        avg_remaining_per_player = remaining_after_bid / spots_after_bid
+        reserved_after = (spots_after_bid - 1) * settings.min_bid
+        max_bid_after = remaining_after_bid - reserved_after
+    else:
+        avg_remaining_per_player = remaining_after_bid
+        max_bid_after = remaining_after_bid
+
+    return {
+        "bid_amount": bid_amount,
+        "is_affordable": bid_amount <= max_bid_info["max_bid"],
+        "remaining_after": remaining_after_bid,
+        "spots_after": spots_after_bid,
+        "avg_per_player_after": round(avg_remaining_per_player, 1),
+        "max_bid_after": max(0, max_bid_after),
+        "over_max_by": max(0, bid_amount - max_bid_info["max_bid"]),
+    }
