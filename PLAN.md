@@ -138,9 +138,87 @@ Steamer CSV → Import → Player DB → SGP Calculation → Dollar Values
 
 ---
 
-## Future Enhancements (Not in v1)
-- Multiple projection system support
-- Head-to-head and points league formats
-- Snake draft mode
-- Player comparison tool
-- Historical draft analysis
+## Future Enhancements - Feature Roadmap
+
+### Real-Time Decision Support
+
+1. **Target List / Watchlist** - Let users mark players they want with max bid prices. Highlight when a target is nominated and show if current price is below your limit.
+
+2. **Positional Scarcity Indicator** - Show a "danger zone" warning when only 2-3 quality players remain at a position. Help avoid getting stuck with replacement-level options.
+
+3. **Best Available by Position** - Quick tab/view showing top 5 available players at each position, sorted by value. Faster than filtering the main table.
+
+4. **Inflation/Deflation Tracker** - Track whether actual draft prices are running above or below projected values. Show a running "inflation factor" (e.g., +8% over projections) to adjust bidding strategy.
+
+### Team Building Assistance
+
+5. **Category Balance Dashboard** - Visual display (bar chart or radar chart) showing your team's projected standings in each category. Highlight weak categories to target.
+
+6. **Team Needs Analysis** - After each pick, suggest which positions/categories to prioritize next based on remaining budget and roster holes.
+
+7. **Max Affordable Bid Calculator** - Given remaining budget and roster spots to fill, calculate the maximum you can bid on a player while still filling your roster at minimum bids.
+
+### Opponent Intelligence
+
+8. **Opponent Needs Tracker** - Show what positions each team still needs. Predict who might bid aggressively on certain players.
+
+9. **Budget Pressure Alerts** - Flag teams running low on budget who may be forced to let bargains pass.
+
+### Speed & Usability
+
+10. **Quick Search / Hotkey** - Keyboard shortcut (Ctrl+F or `/`) to instantly search for a player by name when they're nominated. Jump straight to their row.
+
+11. **Nomination Queue** - Track whose turn to nominate and optionally queue your upcoming nominations.
+
+12. **One-Click Draft** - For players you're tracking, draft them with one click at the current price without re-selecting from dropdowns.
+
+13. **Sound/Visual Alerts** - Optional audio ping when a target player is available below your max price, or when it's your turn to nominate.
+
+### Analysis & Strategy
+
+14. **Player Comparison Tool** - Side-by-side comparison of 2-3 players showing stats, values, and category contributions.
+
+15. **Draft Replay / History Analysis** - After the draft, review all picks with analysis of bargains and overpays across the league.
+
+16. **Tier-Based Grouping** - Group players into value tiers (e.g., $30+, $20-29, $10-19) to quickly see when tiers are depleted.
+
+### Quality of Life
+
+17. **Dark Mode** - Easier on the eyes during a long draft.
+
+18. **Mobile/Tablet View** - Responsive layout for following along on a second device.
+
+19. **Draft Notes** - Add notes to players (injury concerns, sleeper pick, avoid, etc.) that persist through the draft.
+
+20. **Undo with Confirmation** - Batch undo or "correct last N picks" for fixing entry mistakes quickly.
+
+---
+
+### Priority
+
+**Highest impact for draft day**: Target List (#1), Max Bid Calculator (#7), Quick Search (#10), and Category Balance Dashboard (#5). These address the most common draft-day pain points: tracking targets, avoiding overbidding, finding players fast, and building a balanced team.
+
+---
+
+### Implementation Status
+
+- [ ] 1. Target List / Watchlist
+- [ ] 2. Positional Scarcity Indicator
+- [ ] 3. Best Available by Position
+- [ ] 4. Inflation/Deflation Tracker
+- [ ] 5. Category Balance Dashboard
+- [ ] 6. Team Needs Analysis
+- [ ] 7. Max Affordable Bid Calculator
+- [ ] 8. Opponent Needs Tracker
+- [ ] 9. Budget Pressure Alerts
+- [ ] 10. Quick Search / Hotkey
+- [ ] 11. Nomination Queue
+- [ ] 12. One-Click Draft
+- [ ] 13. Sound/Visual Alerts
+- [ ] 14. Player Comparison Tool
+- [ ] 15. Draft Replay / History Analysis
+- [ ] 16. Tier-Based Grouping
+- [ ] 17. Dark Mode
+- [ ] 18. Mobile/Tablet View
+- [ ] 19. Draft Notes
+- [ ] 20. Undo with Confirmation
