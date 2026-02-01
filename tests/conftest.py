@@ -5,7 +5,7 @@ from pathlib import Path
 from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
 
-from src.database import Base, Player, Team, DraftPick
+from src.database import Base, Player, Team, DraftPick, TargetPlayer
 
 
 @pytest.fixture

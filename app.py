@@ -4,7 +4,7 @@ import streamlit as st
 import pandas as pd
 from pathlib import Path
 
-from src.database import init_db, get_session, Player, Team, DraftState
+from src.database import init_db, get_session, Player, Team, DraftState, TargetPlayer
 from src.projections import (
     import_hitters_csv,
     import_pitchers_csv,
@@ -22,6 +22,16 @@ from src.draft import (
     get_draft_state,
     get_all_teams,
     get_user_team,
+)
+from src.targets import (
+    add_target,
+    remove_target,
+    update_target,
+    get_targets,
+    get_target_player_ids,
+    get_target_by_player_id,
+    clear_all_targets,
+    get_available_targets_below_value,
 )
 
 # Page configuration
@@ -153,7 +163,7 @@ def main():
         st.header("Navigation")
         page = st.radio(
             "Select Page",
-            ["Player Database", "Draft Room", "My Team", "All Teams", "Import Projections", "League Settings"],
+            ["Player Database", "Draft Room", "My Targets", "My Team", "All Teams", "Import Projections", "League Settings"],
             label_visibility="collapsed",
         )
 
@@ -171,6 +181,8 @@ def main():
         show_player_database(session)
     elif page == "Draft Room":
         show_draft_room(session)
+    elif page == "My Targets":
+        show_my_targets(session)
     elif page == "My Team":
         show_my_team(session)
     elif page == "All Teams":
@@ -294,6 +306,54 @@ def show_player_database(session):
     )
 
     st.caption(f"Showing {len(players)} players")
+
+    # Quick add to targets
+    st.divider()
+    st.subheader("Quick Add to Targets")
+
+    target_ids = get_target_player_ids(session)
+    # Filter to only show players not already targeted and not drafted
+    targetable_players = [p for p in players if p.id not in target_ids and not p.is_drafted]
+
+    if targetable_players:
+        col1, col2, col3 = st.columns([3, 1, 1])
+
+        with col1:
+            player_options = {
+                f"{p.name} ({p.positions}) - ${p.dollar_value:.0f}" if p.dollar_value else f"{p.name} ({p.positions})": p.id
+                for p in targetable_players[:100]
+            }
+            selected_label = st.selectbox(
+                "Select Player to Target",
+                options=list(player_options.keys()),
+                key="db_target_player",
+            )
+            selected_id = player_options[selected_label]
+
+        selected_player = session.get(Player, selected_id)
+        default_bid = int(selected_player.dollar_value) if selected_player.dollar_value else 1
+
+        with col2:
+            max_bid = st.number_input(
+                "Max Bid ($)",
+                min_value=1,
+                max_value=999,
+                value=default_bid,
+                key="db_target_max_bid",
+            )
+
+        with col3:
+            st.write("")  # Spacer
+            st.write("")  # Spacer
+            if st.button("Add to Targets", key="db_add_target"):
+                try:
+                    add_target(session, selected_id, max_bid)
+                    st.success(f"Added {selected_player.name} to targets!")
+                    st.rerun()
+                except ValueError as e:
+                    st.error(str(e))
+    else:
+        st.info("All displayed players are either already targeted or drafted.")
 
 
 def show_draft_room(session):
@@ -422,6 +482,21 @@ def show_draft_room(session):
         st.info("Set your team name in the sidebar and click 'Start Draft' to begin.")
         return
 
+    # Target alerts - show bargains at the top
+    bargains = get_available_targets_below_value(session)
+    if bargains:
+        with st.container():
+            st.success(f"🎯 **{len(bargains)} TARGET ALERT{'S' if len(bargains) > 1 else ''}** - Players available at or below your max bid!")
+            cols = st.columns(min(len(bargains), 4))
+            for i, b in enumerate(bargains[:4]):  # Show up to 4
+                player = b["player"]
+                with cols[i]:
+                    st.markdown(f"**{player.name}**")
+                    st.caption(f"Value: ${b['value']:.0f} | Max: ${b['max_bid']} | +${b['headroom']:.0f} headroom")
+            if len(bargains) > 4:
+                st.caption(f"... and {len(bargains) - 4} more. See My Targets for full list.")
+        st.divider()
+
     # Manual recalculate values button (backup option - values auto-update after each pick)
     col1, col2 = st.columns([3, 1])
     with col2:
@@ -497,10 +572,30 @@ def show_draft_room(session):
 
     available = query.limit(100).all()
 
+    # Get target info for highlighting
+    target_ids = get_target_player_ids(session)
+    target_info = {t.player_id: t for t in get_targets(session, include_drafted=False)}
+
     if available:
         rows = []
-        for p in available:
+        target_rows = []  # Track which rows are targets for styling
+        for idx, p in enumerate(available):
+            # Check if player is targeted
+            is_target = p.id in target_ids
+            target = target_info.get(p.id)
+
+            # Build target indicator
+            if is_target and target:
+                value = p.dollar_value or 0
+                if value <= target.max_bid:
+                    target_display = f"🎯 ${target.max_bid}"  # Bargain - at/below max
+                else:
+                    target_display = f"⭐ ${target.max_bid}"  # Target but above max
+            else:
+                target_display = ""
+
             row = {
+                "Target": target_display,
                 "Name": p.name,
                 "Team": p.team or "",
                 "Type": p.player_type.title() if p.player_type else "",
@@ -533,15 +628,33 @@ def show_draft_room(session):
                         row[f"{cat.upper()} SGP"] = round(p.sgp_breakdown.get(cat, 0), 2)
 
             rows.append(row)
+            if is_target:
+                target_rows.append(idx)
 
         df = pd.DataFrame(rows)
 
+        # Style function to highlight target rows
+        def highlight_targets(row):
+            if row.name in target_rows:
+                # Check if it's a bargain (🎯) or just a target (⭐)
+                if "🎯" in str(row.get("Target", "")):
+                    return ["background-color: #c8e6c9"] * len(row)  # Light green for bargains
+                else:
+                    return ["background-color: #fff9c4"] * len(row)  # Light yellow for targets
+            return [""] * len(row)
+
+        styled_df = df.style.apply(highlight_targets, axis=1)
+
         st.dataframe(
-            df,
+            styled_df,
             width='stretch',
             hide_index=True,
         )
+
+        # Legend
         st.caption(f"Showing top {len(available)} available players by value")
+        if target_ids:
+            st.caption("🎯 = Target at/below max bid (bargain!) | ⭐ = Target above max bid")
 
         # Export available players
         csv = df.to_csv(index=False)
@@ -611,6 +724,213 @@ def show_draft_room(session):
             )
     else:
         st.info("No picks yet. Start drafting!")
+
+
+def show_my_targets(session):
+    """Display and manage the user's target list."""
+    st.header("My Targets")
+
+    st.markdown("""
+    Build your target list before the draft. Set maximum bid prices for players you want,
+    and they'll be highlighted in the Draft Room when available.
+    """)
+
+    # Get current targets
+    target_ids = get_target_player_ids(session)
+
+    # Bargain alerts - targets available at or below max bid
+    bargains = get_available_targets_below_value(session)
+    if bargains:
+        st.success(f"🎯 {len(bargains)} target(s) available at or below your max bid!")
+        with st.expander("View Bargain Targets", expanded=True):
+            for b in bargains:
+                player = b["player"]
+                col1, col2, col3, col4 = st.columns([3, 1, 1, 1])
+                with col1:
+                    st.write(f"**{player.name}** ({player.positions})")
+                with col2:
+                    st.write(f"Value: ${b['value']:.0f}")
+                with col3:
+                    st.write(f"Max Bid: ${b['max_bid']}")
+                with col4:
+                    st.write(f"Headroom: +${b['headroom']:.0f}")
+
+    st.divider()
+
+    # Add new target section
+    st.subheader("Add Target")
+
+    # Get available players not already targeted
+    available_players = session.query(Player).filter(
+        Player.is_drafted == False,
+        ~Player.id.in_(target_ids) if target_ids else True
+    ).order_by(Player.dollar_value.desc()).all()
+
+    if available_players:
+        col1, col2, col3 = st.columns([3, 1, 1])
+
+        with col1:
+            player_options = {
+                f"{p.name} ({p.positions}) - ${p.dollar_value:.0f}" if p.dollar_value else f"{p.name} ({p.positions})": p.id
+                for p in available_players[:200]  # Limit for performance
+            }
+            selected_player_label = st.selectbox(
+                "Select Player",
+                options=list(player_options.keys()),
+                key="target_player_select",
+            )
+            selected_player_id = player_options[selected_player_label]
+
+        # Get selected player for default max bid
+        selected_player = session.get(Player, selected_player_id)
+        default_max = int(selected_player.dollar_value) if selected_player.dollar_value else 1
+
+        with col2:
+            max_bid = st.number_input(
+                "Max Bid ($)",
+                min_value=1,
+                max_value=999,
+                value=default_max,
+                key="target_max_bid",
+            )
+
+        with col3:
+            priority = st.selectbox(
+                "Priority",
+                options=[("High", 2), ("Medium", 1), ("Low", 0)],
+                format_func=lambda x: x[0],
+                key="target_priority",
+            )
+
+        notes = st.text_input(
+            "Notes (optional)",
+            placeholder="e.g., Great SB upside, injury risk...",
+            key="target_notes",
+        )
+
+        if st.button("Add to Targets", type="primary"):
+            try:
+                add_target(session, selected_player_id, max_bid, priority[1], notes if notes else None)
+                st.success(f"Added {selected_player.name} to targets!")
+                st.rerun()
+            except ValueError as e:
+                st.error(str(e))
+    else:
+        st.info("No available players to target. Import players first.")
+
+    st.divider()
+
+    # Current targets list
+    st.subheader("Current Targets")
+
+    targets = get_targets(session, include_drafted=True)
+
+    if not targets:
+        st.info("No targets yet. Add players above to build your target list.")
+        return
+
+    # Summary stats
+    available_targets = [t for t in targets if not t.player.is_drafted]
+    drafted_targets = [t for t in targets if t.player.is_drafted]
+
+    col1, col2, col3 = st.columns(3)
+    col1.metric("Total Targets", len(targets))
+    col2.metric("Still Available", len(available_targets))
+    col3.metric("Already Drafted", len(drafted_targets))
+
+    st.divider()
+
+    # Display targets
+    for target in targets:
+        player = target.player
+        is_drafted = player.is_drafted
+        value = player.dollar_value or 0
+
+        # Determine status and styling
+        if is_drafted:
+            status = "🔴 Drafted"
+            container_style = "background-color: #ffebee;"
+        elif value <= target.max_bid:
+            status = "🟢 Bargain!"
+            container_style = "background-color: #e8f5e9;"
+        else:
+            status = "🟡 Available"
+            container_style = ""
+
+        # Priority label
+        priority_labels = {0: "Low", 1: "Medium", 2: "High"}
+        priority_label = priority_labels.get(target.priority, "Medium")
+
+        with st.container():
+            col1, col2, col3, col4, col5, col6 = st.columns([3, 1, 1, 1, 1, 1])
+
+            with col1:
+                name_display = f"~~{player.name}~~" if is_drafted else f"**{player.name}**"
+                st.markdown(f"{name_display} ({player.positions})")
+                if target.notes:
+                    st.caption(f"📝 {target.notes}")
+
+            with col2:
+                st.write(f"Value: ${value:.0f}")
+
+            with col3:
+                st.write(f"Max: ${target.max_bid}")
+
+            with col4:
+                st.write(priority_label)
+
+            with col5:
+                st.write(status)
+
+            with col6:
+                if not is_drafted:
+                    if st.button("Remove", key=f"remove_target_{player.id}"):
+                        remove_target(session, player.id)
+                        st.rerun()
+
+        # Edit section (collapsible)
+        if not is_drafted:
+            with st.expander(f"Edit {player.name}", expanded=False):
+                edit_col1, edit_col2, edit_col3 = st.columns([1, 1, 2])
+
+                with edit_col1:
+                    new_max = st.number_input(
+                        "New Max Bid",
+                        min_value=1,
+                        max_value=999,
+                        value=target.max_bid,
+                        key=f"edit_max_{player.id}",
+                    )
+
+                with edit_col2:
+                    new_priority = st.selectbox(
+                        "New Priority",
+                        options=[("High", 2), ("Medium", 1), ("Low", 0)],
+                        format_func=lambda x: x[0],
+                        index=2 - target.priority,  # Reverse index since High=2
+                        key=f"edit_priority_{player.id}",
+                    )
+
+                with edit_col3:
+                    new_notes = st.text_input(
+                        "New Notes",
+                        value=target.notes or "",
+                        key=f"edit_notes_{player.id}",
+                    )
+
+                if st.button("Save Changes", key=f"save_target_{player.id}"):
+                    update_target(session, player.id, new_max, new_priority[1], new_notes)
+                    st.success("Updated!")
+                    st.rerun()
+
+    st.divider()
+
+    # Clear all targets button
+    if targets:
+        if st.button("Clear All Targets", type="secondary"):
+            count = clear_all_targets(session)
+            st.success(f"Removed {count} targets")
+            st.rerun()
 
 
 def style_surplus(val):
