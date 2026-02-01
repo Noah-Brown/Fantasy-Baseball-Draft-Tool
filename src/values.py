@@ -115,7 +115,7 @@ def _calculate_pool_values(
     # Step 5: Calculate SGP for each player in the pool
     player_sgps = []
     for player in draftable_pool:
-        sgp = _calculate_player_sgp(
+        sgp, breakdown = _calculate_player_sgp(
             player,
             categories,
             player_type,
@@ -123,6 +123,7 @@ def _calculate_pool_values(
             denominators
         )
         player.sgp = sgp
+        player.sgp_breakdown = breakdown
         player_sgps.append((player, sgp))
 
     # Step 6: Calculate total positive SGP
@@ -151,6 +152,7 @@ def _calculate_pool_values(
     for player, _ in preliminary_values[pool_size:]:
         player.sgp = 0
         player.dollar_value = min_bid
+        player.sgp_breakdown = {cat.lower(): 0.0 for cat in categories}
 
     return len(players)
 
@@ -279,11 +281,16 @@ def _calculate_player_sgp(
     player_type: str,
     replacement_stats: dict[str, float],
     denominators: dict[str, float],
-) -> float:
+) -> tuple[float, dict[str, float]]:
     """
     Calculate total SGP for a player across all categories.
+
+    Returns:
+        Tuple of (total_sgp, breakdown_dict) where breakdown_dict maps
+        category names to their individual SGP contributions.
     """
     total_sgp = 0.0
+    breakdown = {}
 
     for category in categories:
         cat_lower = category.lower()
@@ -317,9 +324,10 @@ def _calculate_player_sgp(
             # Counting stats: higher is better
             sgp = (player_stat - replacement_stat) / denominator
 
+        breakdown[cat_lower] = sgp
         total_sgp += sgp
 
-    return total_sgp
+    return total_sgp, breakdown
 
 
 def calculate_remaining_player_values(session: Session, settings: LeagueSettings = None) -> int:
@@ -434,3 +442,39 @@ def get_player_value_breakdown(
         breakdown["categories"][category] = stat_value
 
     return breakdown
+
+
+def calculate_category_surplus(player: Player, price_paid: int) -> dict[str, float]:
+    """
+    Calculate surplus for each category using proportional allocation.
+
+    The total surplus (dollar_value - price_paid) is distributed across
+    categories proportionally to each category's SGP contribution.
+
+    Args:
+        player: Player with sgp_breakdown populated
+        price_paid: The price paid for the player
+
+    Returns:
+        Dict mapping category names to their surplus values
+    """
+    if not player.sgp_breakdown:
+        return {}
+
+    if player.sgp is None:
+        return {}
+
+    total_surplus = (player.dollar_value or 0) - price_paid
+    total_sgp = player.sgp
+
+    if total_sgp == 0:
+        # Distribute evenly if no SGP differentiation
+        num_cats = len(player.sgp_breakdown)
+        if num_cats == 0:
+            return {}
+        return {cat: total_surplus / num_cats for cat in player.sgp_breakdown}
+
+    return {
+        cat: (cat_sgp / total_sgp) * total_surplus
+        for cat, cat_sgp in player.sgp_breakdown.items()
+    }
