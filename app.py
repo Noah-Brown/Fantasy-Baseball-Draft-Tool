@@ -213,7 +213,7 @@ def show_player_database(session):
     # Display table
     st.dataframe(
         df,
-        use_container_width=True,
+        width='stretch',
         hide_index=True,
     )
 
@@ -310,7 +310,7 @@ def show_draft_room(session):
                     key="draft_price",
                 )
 
-                if st.button("DRAFT", type="primary", use_container_width=True):
+                if st.button("DRAFT", type="primary", width='stretch'):
                     try:
                         draft_player(session, selected_player_id, selected_team_id, price, get_current_settings())
                         st.success(f"Drafted {selected_player.name} for ${price}!")
@@ -441,7 +441,7 @@ def show_draft_room(session):
 
         st.dataframe(
             df,
-            use_container_width=True,
+            width='stretch',
             hide_index=True,
         )
         st.caption(f"Showing top {len(available)} available players by value")
@@ -608,7 +608,7 @@ def show_my_team(session):
 
         st.dataframe(
             styled_df,
-            use_container_width=True,
+            width='stretch',
             hide_index=True,
         )
 
@@ -709,7 +709,7 @@ def show_all_teams(session):
         summary_data.append(row)
 
     summary_df = pd.DataFrame(summary_data)
-    st.dataframe(summary_df, use_container_width=True, hide_index=True)
+    st.dataframe(summary_df, width='stretch', hide_index=True)
 
     # League-wide category surplus comparison table
     if show_category_surplus and all_team_cat_totals:
@@ -740,7 +740,7 @@ def show_all_teams(session):
                 style_surplus,
                 subset=[c for c in cat_cols if c in comparison_df.columns]
             )
-            st.dataframe(styled_comparison, use_container_width=True, hide_index=True)
+            st.dataframe(styled_comparison, width='stretch', hide_index=True)
 
     st.divider()
 
@@ -796,7 +796,7 @@ def show_all_teams(session):
                 styled_df = df.style.applymap(style_surplus, subset=[c for c in surplus_cols if c in df.columns])
                 st.dataframe(
                     styled_df,
-                    use_container_width=True,
+                    width='stretch',
                     hide_index=True,
                 )
 
