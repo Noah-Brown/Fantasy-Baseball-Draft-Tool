@@ -461,3 +461,52 @@ def calculate_bid_impact(
         "max_bid_after": max(0, max_bid_after),
         "over_max_by": max(0, bid_amount - max_bid_info["max_bid"]),
     }
+
+
+def get_position_scarcity(session: Session, settings: LeagueSettings = None, quality_threshold: int = 2):
+    """
+    Analyze positional scarcity for available players.
+
+    Returns dict mapping position to scarcity info for positions
+    with 3 or fewer quality players remaining.
+
+    Args:
+        session: Database session
+        settings: League settings (unused but included for consistency)
+        quality_threshold: Minimum dollar value for a player to be considered "quality"
+
+    Returns:
+        Dict mapping position to scarcity info:
+        {
+            'C': {
+                'count': 2,
+                'level': 'medium',
+                'top_available': [Player, Player]
+            },
+            ...
+        }
+    """
+    if settings is None:
+        settings = DEFAULT_SETTINGS
+
+    positions = ["C", "1B", "2B", "3B", "SS", "OF", "SP", "RP"]
+    scarcity = {}
+
+    for pos in positions:
+        # Query available quality players at this position
+        query = session.query(Player).filter(
+            Player.is_drafted == False,
+            Player.dollar_value >= quality_threshold,
+            Player.positions.contains(pos)
+        )
+        quality_count = query.count()
+
+        if quality_count <= 3:
+            scarcity[pos] = {
+                'count': quality_count,
+                'level': 'critical' if quality_count <= 1 else
+                         'medium' if quality_count == 2 else 'low',
+                'top_available': query.order_by(Player.dollar_value.desc()).limit(3).all()
+            }
+
+    return scarcity
