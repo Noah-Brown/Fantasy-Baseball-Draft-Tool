@@ -11,6 +11,7 @@ from src.values import (
     _calculate_player_sgp,
     _get_player_stats,
     _calculate_pool_values,
+    calculate_category_surplus,
 )
 
 
@@ -189,12 +190,14 @@ class TestPlayerSGP:
         denominators = {"r": 15, "hr": 8, "rbi": 15, "sb": 5, "avg": 10}
         categories = ["R", "HR", "RBI", "SB", "AVG"]
 
-        sgp = _calculate_player_sgp(
+        sgp, breakdown = _calculate_player_sgp(
             good_player, categories, "hitter",
             replacement_stats, denominators
         )
 
         assert sgp > 0
+        assert isinstance(breakdown, dict)
+        assert len(breakdown) == 5
 
     def test_below_replacement_negative_sgp(self, session):
         """Test that players below replacement have negative SGP."""
@@ -212,12 +215,13 @@ class TestPlayerSGP:
         denominators = {"r": 15, "hr": 8, "rbi": 15, "sb": 5, "avg": 10}
         categories = ["R", "HR", "RBI", "SB", "AVG"]
 
-        sgp = _calculate_player_sgp(
+        sgp, breakdown = _calculate_player_sgp(
             bad_player, categories, "hitter",
             replacement_stats, denominators
         )
 
         assert sgp < 0
+        assert isinstance(breakdown, dict)
 
     def test_pitcher_era_lower_is_better(self, session):
         """Test that lower ERA gives positive SGP for pitchers."""
@@ -235,13 +239,15 @@ class TestPlayerSGP:
         denominators = {"w": 3, "sv": 5, "k": 30, "era": 50, "whip": 10}
         categories = ["W", "SV", "K", "ERA", "WHIP"]
 
-        sgp = _calculate_player_sgp(
+        sgp, breakdown = _calculate_player_sgp(
             good_pitcher, categories, "pitcher",
             replacement_stats, denominators
         )
 
         # ERA/WHIP contributions should be positive (good pitcher has lower values)
         assert sgp > 0
+        assert "era" in breakdown
+        assert "whip" in breakdown
 
 
 class TestDollarValueConversion:
@@ -430,3 +436,160 @@ class TestPoolValues:
         # Each pool should be close to its allocated budget
         assert abs(hitter_total - expected_hitter_budget) / expected_hitter_budget < 0.10
         assert abs(pitcher_total - expected_pitcher_budget) / expected_pitcher_budget < 0.10
+
+
+class TestSGPBreakdown:
+    """Tests for per-category SGP breakdown storage."""
+
+    def test_sgp_breakdown_populated_for_hitters(self, session, sample_hitters, settings):
+        """Test that sgp_breakdown is populated for hitters."""
+        calculate_all_player_values(session, settings)
+
+        # Check a hitter in the draftable pool
+        hitter = sample_hitters[0]
+        assert hitter.sgp_breakdown is not None
+        assert isinstance(hitter.sgp_breakdown, dict)
+
+        # Should have all hitter categories
+        expected_cats = ["r", "hr", "rbi", "sb", "avg"]
+        for cat in expected_cats:
+            assert cat in hitter.sgp_breakdown
+
+    def test_sgp_breakdown_populated_for_pitchers(self, session, sample_pitchers, settings):
+        """Test that sgp_breakdown is populated for pitchers."""
+        calculate_all_player_values(session, settings)
+
+        # Check a pitcher in the draftable pool
+        pitcher = sample_pitchers[0]
+        assert pitcher.sgp_breakdown is not None
+        assert isinstance(pitcher.sgp_breakdown, dict)
+
+        # Should have all pitcher categories
+        expected_cats = ["w", "sv", "k", "era", "whip"]
+        for cat in expected_cats:
+            assert cat in pitcher.sgp_breakdown
+
+    def test_sgp_breakdown_sums_to_total(self, session, sample_hitters, settings):
+        """Test that category SGP values sum to total SGP."""
+        calculate_all_player_values(session, settings)
+
+        for hitter in sample_hitters[:10]:
+            if hitter.sgp_breakdown and hitter.sgp:
+                breakdown_sum = sum(hitter.sgp_breakdown.values())
+                # Allow small floating point tolerance
+                assert abs(breakdown_sum - hitter.sgp) < 0.001
+
+    def test_sgp_breakdown_zeros_outside_pool(self, session, settings):
+        """Test that players outside draftable pool have zero breakdown."""
+        # Create more players than pool size
+        for i in range(150):
+            player = Player(
+                name=f"Hitter {i}",
+                player_type="hitter",
+                positions="OF",
+                r=100 - i * 0.5, hr=30 - i * 0.2, rbi=100 - i * 0.5,
+                sb=15 - i * 0.1, avg=0.290 - i * 0.001,
+                ab=500, h=145 - i * 0.5,
+            )
+            session.add(player)
+        session.commit()
+
+        calculate_all_player_values(session, settings)
+
+        # Get players sorted by value
+        players = session.query(Player).filter(Player.player_type == "hitter").all()
+        players.sort(key=lambda p: p.dollar_value or 0, reverse=True)
+
+        # Last player (outside pool) should have zero breakdown
+        last_player = players[-1]
+        assert last_player.sgp == 0
+        assert last_player.sgp_breakdown is not None
+        assert all(v == 0.0 for v in last_player.sgp_breakdown.values())
+
+
+class TestCategorySurplus:
+    """Tests for the calculate_category_surplus function."""
+
+    def test_positive_surplus_distribution(self, session, sample_hitters, settings):
+        """Test surplus is distributed proportionally to SGP."""
+        calculate_all_player_values(session, settings)
+
+        hitter = sample_hitters[0]
+        # Simulate buying at half value
+        price_paid = int((hitter.dollar_value or 0) / 2)
+        total_surplus = (hitter.dollar_value or 0) - price_paid
+
+        cat_surplus = calculate_category_surplus(hitter, price_paid)
+
+        # Sum of category surplus should equal total surplus
+        if cat_surplus:
+            surplus_sum = sum(cat_surplus.values())
+            assert abs(surplus_sum - total_surplus) < 0.01
+
+    def test_negative_surplus_distribution(self, session, sample_hitters, settings):
+        """Test negative surplus (overpay) is distributed correctly."""
+        calculate_all_player_values(session, settings)
+
+        hitter = sample_hitters[0]
+        # Simulate overpaying
+        price_paid = int((hitter.dollar_value or 0) * 2)
+        total_surplus = (hitter.dollar_value or 0) - price_paid
+
+        cat_surplus = calculate_category_surplus(hitter, price_paid)
+
+        if cat_surplus:
+            surplus_sum = sum(cat_surplus.values())
+            assert surplus_sum < 0
+            assert abs(surplus_sum - total_surplus) < 0.01
+
+    def test_empty_breakdown_returns_empty(self, session):
+        """Test that player without breakdown returns empty dict."""
+        player = Player(
+            name="No Breakdown",
+            player_type="hitter",
+            sgp=None,
+            sgp_breakdown=None,
+        )
+
+        cat_surplus = calculate_category_surplus(player, 10)
+        assert cat_surplus == {}
+
+    def test_zero_sgp_distributes_evenly(self, session):
+        """Test that zero total SGP distributes surplus evenly."""
+        player = Player(
+            name="Zero SGP",
+            player_type="hitter",
+            dollar_value=10,
+            sgp=0,
+            sgp_breakdown={"r": 0, "hr": 0, "rbi": 0, "sb": 0, "avg": 0},
+        )
+
+        cat_surplus = calculate_category_surplus(player, 5)
+
+        # Surplus of $5 should be distributed evenly across 5 categories
+        assert len(cat_surplus) == 5
+        for val in cat_surplus.values():
+            assert val == 1.0  # $5 / 5 categories
+
+    def test_proportional_allocation(self, session):
+        """Test that surplus is allocated proportionally to SGP contribution."""
+        player = Player(
+            name="Proportional",
+            player_type="hitter",
+            dollar_value=20,
+            sgp=10.0,
+            sgp_breakdown={"r": 5.0, "hr": 3.0, "rbi": 2.0, "sb": 0, "avg": 0},
+        )
+
+        # Buy at $10, so $10 surplus
+        cat_surplus = calculate_category_surplus(player, 10)
+
+        # r contributes 50% of SGP, should get 50% of surplus ($5)
+        assert abs(cat_surplus["r"] - 5.0) < 0.01
+        # hr contributes 30% of SGP, should get 30% of surplus ($3)
+        assert abs(cat_surplus["hr"] - 3.0) < 0.01
+        # rbi contributes 20% of SGP, should get 20% of surplus ($2)
+        assert abs(cat_surplus["rbi"] - 2.0) < 0.01
+        # sb and avg contribute 0%, should get 0%
+        assert cat_surplus["sb"] == 0
+        assert cat_surplus["avg"] == 0

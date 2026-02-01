@@ -1,7 +1,7 @@
 """Database models for the fantasy baseball draft tool."""
 
 from datetime import datetime
-from sqlalchemy import create_engine, Column, Integer, String, Float, Boolean, DateTime, ForeignKey
+from sqlalchemy import create_engine, Column, Integer, String, Float, Boolean, DateTime, ForeignKey, JSON
 from sqlalchemy.orm import declarative_base, relationship, sessionmaker
 
 Base = declarative_base()
@@ -41,6 +41,7 @@ class Player(Base):
     # Calculated values (populated by value engine)
     sgp = Column(Float)          # Total standings gain points
     dollar_value = Column(Float) # Auction dollar value
+    sgp_breakdown = Column(JSON) # {"r": 1.5, "hr": 2.1, ...} per-category SGP
 
     # Draft status
     is_drafted = Column(Boolean, default=False)

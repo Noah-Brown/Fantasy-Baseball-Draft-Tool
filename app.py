@@ -12,7 +12,7 @@ from src.projections import (
     get_available_players,
 )
 from src.settings import DEFAULT_SETTINGS, LeagueSettings
-from src.values import calculate_all_player_values, calculate_remaining_player_values
+from src.values import calculate_all_player_values, calculate_remaining_player_values, calculate_category_surplus
 from src.draft import (
     initialize_draft,
     draft_player,
@@ -361,7 +361,7 @@ def show_draft_room(session):
     st.subheader("Available Players")
 
     # Filters for available players
-    col1, col2, col3 = st.columns(3)
+    col1, col2, col3, col4 = st.columns([1, 1, 1, 1])
 
     with col1:
         player_type = st.selectbox(
@@ -383,6 +383,14 @@ def show_draft_room(session):
             "Search Player",
             placeholder="Player name...",
             key="avail_search",
+        )
+
+    with col4:
+        show_category_sgp = st.checkbox(
+            "Show Category SGP",
+            key="show_category_sgp",
+            disabled=(player_type == "All"),
+            help="Available when viewing Hitters or Pitchers only",
         )
 
     # Build query for available players
@@ -408,16 +416,28 @@ def show_draft_room(session):
     available = query.limit(100).all()
 
     if available:
-        df = pd.DataFrame([
-            {
+        rows = []
+        for p in available:
+            row = {
                 "Name": p.name,
                 "Team": p.team or "",
                 "Type": p.player_type.title() if p.player_type else "",
                 "Pos": p.positions or "",
                 "Value": f"${p.dollar_value:.0f}" if p.dollar_value else "-",
             }
-            for p in available
-        ])
+
+            # Add category SGP columns if toggle is enabled and not viewing "All"
+            if show_category_sgp and player_type != "All" and p.sgp_breakdown:
+                if player_type == "Hitters":
+                    for cat in ["r", "hr", "rbi", "sb", "avg"]:
+                        row[cat.upper()] = round(p.sgp_breakdown.get(cat, 0), 2)
+                elif player_type == "Pitchers":
+                    for cat in ["w", "sv", "k", "era", "whip"]:
+                        row[cat.upper()] = round(p.sgp_breakdown.get(cat, 0), 2)
+
+            rows.append(row)
+
+        df = pd.DataFrame(rows)
 
         st.dataframe(
             df,
@@ -525,10 +545,15 @@ def show_my_team(session):
         return
 
     # Summary metrics at top
-    col1, col2, col3 = st.columns(3)
+    col1, col2, col3, col4 = st.columns([1, 1, 1, 1])
     col1.metric("Spent", f"${user_team.spent}")
     col2.metric("Remaining", f"${user_team.remaining_budget}")
     col3.metric("Players", user_team.roster_count)
+    with col4:
+        show_category_surplus = st.checkbox(
+            "Show Category Surplus",
+            key="my_team_category_surplus",
+        )
 
     st.divider()
 
@@ -540,25 +565,46 @@ def show_my_team(session):
 
     # Build dataframe with player info + value/price comparison
     rows = []
+    category_surplus_totals = {"r": 0, "hr": 0, "rbi": 0, "sb": 0, "avg": 0, "w": 0, "sv": 0, "k": 0, "era": 0, "whip": 0}
     for pick in picks:
         player = pick.player
         if player:
             value = player.dollar_value or 0
             surplus = value - pick.price
-            rows.append({
+            row = {
                 "Name": player.name,
                 "Pos": player.positions or "",
                 "MLB Team": player.team or "",
                 "Price": pick.price,
                 "Value": round(value, 0),
                 "Surplus": round(surplus, 0),
-            })
+            }
+
+            # Add category surplus columns if toggle is enabled
+            if show_category_surplus:
+                cat_surplus = calculate_category_surplus(player, pick.price)
+                if player.player_type == "hitter":
+                    for cat in ["r", "hr", "rbi", "sb", "avg"]:
+                        val = cat_surplus.get(cat, 0)
+                        row[f"{cat.upper()} +/-"] = round(val, 1)
+                        category_surplus_totals[cat] += val
+                elif player.player_type == "pitcher":
+                    for cat in ["w", "sv", "k", "era", "whip"]:
+                        val = cat_surplus.get(cat, 0)
+                        row[f"{cat.upper()} +/-"] = round(val, 1)
+                        category_surplus_totals[cat] += val
+
+            rows.append(row)
 
     if rows:
         df = pd.DataFrame(rows)
 
-        # Apply styling to Surplus column
-        styled_df = df.style.applymap(style_surplus, subset=['Surplus'])
+        # Apply styling to Surplus column and category surplus columns
+        surplus_cols = ['Surplus']
+        if show_category_surplus:
+            surplus_cols += [col for col in df.columns if col.endswith('+/-')]
+
+        styled_df = df.style.applymap(style_surplus, subset=[c for c in surplus_cols if c in df.columns])
 
         st.dataframe(
             styled_df,
@@ -587,6 +633,31 @@ def show_my_team(session):
         scol2.metric("Total Spent", f"${total_spent:.0f}")
         scol3.metric("Total Surplus", f"${total_surplus:+.0f}")
 
+        # Category surplus totals
+        if show_category_surplus:
+            st.divider()
+            st.subheader("Category Surplus Totals")
+
+            # Hitter categories
+            hitter_cats = ["r", "hr", "rbi", "sb", "avg"]
+            hitter_totals = {cat: category_surplus_totals[cat] for cat in hitter_cats}
+            if any(v != 0 for v in hitter_totals.values()):
+                st.markdown("**Hitting**")
+                hcols = st.columns(5)
+                for i, cat in enumerate(hitter_cats):
+                    val = hitter_totals[cat]
+                    hcols[i].metric(cat.upper(), f"{val:+.1f}")
+
+            # Pitcher categories
+            pitcher_cats = ["w", "sv", "k", "era", "whip"]
+            pitcher_totals = {cat: category_surplus_totals[cat] for cat in pitcher_cats}
+            if any(v != 0 for v in pitcher_totals.values()):
+                st.markdown("**Pitching**")
+                pcols = st.columns(5)
+                for i, cat in enumerate(pitcher_cats):
+                    val = pitcher_totals[cat]
+                    pcols[i].metric(cat.upper(), f"{val:+.1f}")
+
 
 def show_all_teams(session):
     """Display all teams and their rosters."""
@@ -602,21 +673,74 @@ def show_all_teams(session):
         st.warning("No teams found.")
         return
 
-    # Summary table
+    # Toggle for category surplus display
+    show_category_surplus = st.checkbox(
+        "Show Category Surplus",
+        key="all_teams_category_surplus",
+    )
+
+    # Summary table - include category surplus totals if enabled
     summary_data = []
+    all_team_cat_totals = {}  # {team_id: {cat: total}}
+
     for t in teams:
         team_label = t.name
         if t.is_user_team:
             team_label += " (You)"
-        summary_data.append({
+
+        row = {
             "Team": team_label,
             "Spent": f"${t.spent}",
             "Remaining": f"${t.remaining_budget}",
             "Players": t.roster_count,
-        })
+        }
+
+        # Calculate category totals for this team
+        if show_category_surplus:
+            team_cat_totals = {"r": 0, "hr": 0, "rbi": 0, "sb": 0, "avg": 0, "w": 0, "sv": 0, "k": 0, "era": 0, "whip": 0}
+            for pick in t.draft_picks:
+                player = pick.player
+                if player:
+                    cat_surplus = calculate_category_surplus(player, pick.price)
+                    for cat, val in cat_surplus.items():
+                        team_cat_totals[cat] += val
+            all_team_cat_totals[t.id] = team_cat_totals
+
+        summary_data.append(row)
 
     summary_df = pd.DataFrame(summary_data)
     st.dataframe(summary_df, use_container_width=True, hide_index=True)
+
+    # League-wide category surplus comparison table
+    if show_category_surplus and all_team_cat_totals:
+        st.divider()
+        st.subheader("League Category Surplus Comparison")
+
+        comparison_rows = []
+        for t in teams:
+            if t.id in all_team_cat_totals:
+                team_label = t.name
+                if t.is_user_team:
+                    team_label += " (You)"
+                cat_totals = all_team_cat_totals[t.id]
+                row = {"Team": team_label}
+                # Hitting categories
+                for cat in ["r", "hr", "rbi", "sb", "avg"]:
+                    row[cat.upper()] = round(cat_totals[cat], 1)
+                # Pitching categories
+                for cat in ["w", "sv", "k", "era", "whip"]:
+                    row[cat.upper()] = round(cat_totals[cat], 1)
+                comparison_rows.append(row)
+
+        if comparison_rows:
+            comparison_df = pd.DataFrame(comparison_rows)
+            # Style positive/negative values
+            cat_cols = ["R", "HR", "RBI", "SB", "AVG", "W", "SV", "K", "ERA", "WHIP"]
+            styled_comparison = comparison_df.style.applymap(
+                style_surplus,
+                subset=[c for c in cat_cols if c in comparison_df.columns]
+            )
+            st.dataframe(styled_comparison, use_container_width=True, hide_index=True)
 
     st.divider()
 
@@ -640,18 +764,36 @@ def show_all_teams(session):
                 if player:
                     value = player.dollar_value or 0
                     surplus = value - pick.price
-                    rows.append({
+                    row = {
                         "Name": player.name,
                         "Pos": player.positions or "",
                         "MLB Team": player.team or "",
                         "Price": pick.price,
                         "Value": round(value, 0),
                         "Surplus": round(surplus, 0),
-                    })
+                    }
+
+                    # Add category surplus columns if toggle is enabled
+                    if show_category_surplus:
+                        cat_surplus = calculate_category_surplus(player, pick.price)
+                        if player.player_type == "hitter":
+                            for cat in ["r", "hr", "rbi", "sb", "avg"]:
+                                row[f"{cat.upper()} +/-"] = round(cat_surplus.get(cat, 0), 1)
+                        elif player.player_type == "pitcher":
+                            for cat in ["w", "sv", "k", "era", "whip"]:
+                                row[f"{cat.upper()} +/-"] = round(cat_surplus.get(cat, 0), 1)
+
+                    rows.append(row)
 
             if rows:
                 df = pd.DataFrame(rows)
-                styled_df = df.style.applymap(style_surplus, subset=['Surplus'])
+
+                # Apply styling to surplus columns
+                surplus_cols = ['Surplus']
+                if show_category_surplus:
+                    surplus_cols += [col for col in df.columns if col.endswith('+/-')]
+
+                styled_df = df.style.applymap(style_surplus, subset=[c for c in surplus_cols if c in df.columns])
                 st.dataframe(
                     styled_df,
                     use_container_width=True,
