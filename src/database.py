@@ -133,6 +133,24 @@ class DraftState(Base):
     updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
 
 
+class TargetPlayer(Base):
+    """A player the user wants to target in the draft."""
+
+    __tablename__ = "target_players"
+
+    id = Column(Integer, primary_key=True)
+    player_id = Column(Integer, ForeignKey("players.id"), nullable=False, unique=True)
+    max_bid = Column(Integer, nullable=False)  # Maximum price willing to pay
+    priority = Column(Integer, default=0)  # Higher = more important (for sorting)
+    notes = Column(String)  # Optional notes about the player
+    created_at = Column(DateTime, default=datetime.utcnow)
+
+    player = relationship("Player", backref="target")
+
+    def __repr__(self):
+        return f"<TargetPlayer {self.player.name if self.player else 'Unknown'} max=${self.max_bid}>"
+
+
 def get_engine(db_path: str = "draft.db"):
     """Create database engine."""
     return create_engine(f"sqlite:///{db_path}")
