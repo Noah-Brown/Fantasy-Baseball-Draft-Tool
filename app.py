@@ -11,7 +11,7 @@ from src.projections import (
     clear_all_players,
     get_available_players,
 )
-from src.settings import DEFAULT_SETTINGS
+from src.settings import DEFAULT_SETTINGS, LeagueSettings
 from src.values import calculate_all_player_values, calculate_remaining_player_values
 from src.draft import (
     initialize_draft,
@@ -37,6 +37,32 @@ def get_db():
     """Initialize and cache database connection."""
     engine = init_db("draft.db")
     return engine
+
+
+def get_current_settings() -> LeagueSettings:
+    """
+    Get current league settings from session state.
+
+    Initializes session state from DEFAULT_SETTINGS if not present.
+    Returns a LeagueSettings instance with current session values.
+    """
+    # Initialize from defaults if not present
+    if "league_settings" not in st.session_state:
+        st.session_state.league_settings = {
+            "num_teams": DEFAULT_SETTINGS.num_teams,
+            "budget_per_team": DEFAULT_SETTINGS.budget_per_team,
+            "min_bid": DEFAULT_SETTINGS.min_bid,
+            "roster_spots": dict(DEFAULT_SETTINGS.roster_spots),
+        }
+
+    # Build LeagueSettings from session state
+    state = st.session_state.league_settings
+    return LeagueSettings(
+        num_teams=state["num_teams"],
+        budget_per_team=state["budget_per_team"],
+        min_bid=state["min_bid"],
+        roster_spots=state["roster_spots"],
+    )
 
 
 def main():
@@ -220,7 +246,7 @@ def show_draft_room(session):
                 if player_count == 0:
                     st.error("Import players first before starting draft!")
                 else:
-                    initialize_draft(session, DEFAULT_SETTINGS, team_name)
+                    initialize_draft(session, get_current_settings(), team_name)
                     st.success("Draft initialized!")
                     st.rerun()
         else:
@@ -286,7 +312,7 @@ def show_draft_room(session):
 
                 if st.button("DRAFT", type="primary", use_container_width=True):
                     try:
-                        draft_player(session, selected_player_id, selected_team_id, price)
+                        draft_player(session, selected_player_id, selected_team_id, price, get_current_settings())
                         st.success(f"Drafted {selected_player.name} for ${price}!")
                         st.rerun()
                     except ValueError as e:
@@ -320,19 +346,12 @@ def show_draft_room(session):
         st.info("Set your team name in the sidebar and click 'Start Draft' to begin.")
         return
 
-    # Recalculate values button with stale indicator
+    # Manual recalculate values button (backup option - values auto-update after each pick)
     col1, col2 = st.columns([3, 1])
-    with col1:
-        if draft_state.values_stale:
-            st.warning("Player values are stale and need recalculation.")
     with col2:
-        button_label = "Recalculate Values"
-        if draft_state.values_stale:
-            button_label = "⚠️ Recalculate Values"
-
-        if st.button(button_label, type="primary" if draft_state.values_stale else "secondary"):
+        if st.button("Recalculate Values", type="secondary"):
             try:
-                count = calculate_remaining_player_values(session, DEFAULT_SETTINGS)
+                count = calculate_remaining_player_values(session, get_current_settings())
                 st.success(f"Recalculated values for {count} available players!")
                 st.rerun()
             except Exception as e:
@@ -439,7 +458,7 @@ def show_draft_room(session):
 
             with col4:
                 if st.button("Undo", key=f"undo_{pick['pick_id']}"):
-                    player = undo_pick(session, pick['pick_id'])
+                    player = undo_pick(session, pick['pick_id'], get_current_settings())
                     if player:
                         st.success(f"Undid pick: {player.name}")
                     st.rerun()
@@ -734,7 +753,7 @@ def show_import_page(session):
 
         if st.button("Calculate Values", type="primary"):
             try:
-                count = calculate_all_player_values(session, DEFAULT_SETTINGS)
+                count = calculate_all_player_values(session, get_current_settings())
                 st.success(f"Calculated values for {count} players!")
                 st.rerun()
             except Exception as e:
@@ -752,7 +771,8 @@ def show_settings_page(session):
     """Page for configuring league settings."""
     st.header("League Settings")
 
-    settings = DEFAULT_SETTINGS
+    # Get current settings from session state
+    settings = get_current_settings()
 
     col1, col2 = st.columns(2)
 
@@ -762,20 +782,28 @@ def show_settings_page(session):
             "Number of Teams",
             min_value=4,
             max_value=20,
-            value=settings.num_teams,
+            value=st.session_state.league_settings["num_teams"],
+            key="settings_num_teams",
         )
         budget = st.number_input(
             "Budget per Team ($)",
             min_value=100,
             max_value=500,
-            value=settings.budget_per_team,
+            value=st.session_state.league_settings["budget_per_team"],
+            key="settings_budget",
         )
         min_bid = st.number_input(
             "Minimum Bid ($)",
             min_value=1,
             max_value=5,
-            value=settings.min_bid,
+            value=st.session_state.league_settings["min_bid"],
+            key="settings_min_bid",
         )
+
+        # Update session state when values change
+        st.session_state.league_settings["num_teams"] = num_teams
+        st.session_state.league_settings["budget_per_team"] = budget
+        st.session_state.league_settings["min_bid"] = min_bid
 
     with col2:
         st.subheader("Scoring Categories")
@@ -788,23 +816,76 @@ def show_settings_page(session):
     st.divider()
 
     st.subheader("Roster Spots")
-    roster_cols = st.columns(4)
 
-    positions = list(settings.roster_spots.items())
-    for i, (pos, count) in enumerate(positions):
-        with roster_cols[i % 4]:
-            st.metric(pos, count)
+    # Hitter positions
+    st.markdown("**Hitters**")
+    hitter_cols = st.columns(4)
+    hitter_positions = ["C", "1B", "2B", "3B", "SS", "OF", "UTIL"]
+
+    for i, pos in enumerate(hitter_positions):
+        with hitter_cols[i % 4]:
+            current_val = st.session_state.league_settings["roster_spots"].get(pos, 0)
+            new_val = st.number_input(
+                pos,
+                min_value=0,
+                max_value=10,
+                value=current_val,
+                key=f"roster_{pos}",
+            )
+            st.session_state.league_settings["roster_spots"][pos] = new_val
+
+    # Pitcher positions
+    st.markdown("**Pitchers**")
+    pitcher_cols = st.columns(4)
+    pitcher_positions = ["SP", "RP", "P"]
+
+    for i, pos in enumerate(pitcher_positions):
+        with pitcher_cols[i % 4]:
+            current_val = st.session_state.league_settings["roster_spots"].get(pos, 0)
+            new_val = st.number_input(
+                pos,
+                min_value=0,
+                max_value=10,
+                value=current_val,
+                key=f"roster_{pos}",
+            )
+            st.session_state.league_settings["roster_spots"][pos] = new_val
+
+    # Bench
+    st.markdown("**Bench**")
+    bench_col = st.columns(4)
+    with bench_col[0]:
+        current_bn = st.session_state.league_settings["roster_spots"].get("BN", 0)
+        new_bn = st.number_input(
+            "BN",
+            min_value=0,
+            max_value=10,
+            value=current_bn,
+            key="roster_BN",
+        )
+        st.session_state.league_settings["roster_spots"]["BN"] = new_bn
 
     st.divider()
 
-    # Summary
-    st.subheader("League Summary")
-    total_budget = num_teams * budget
-    st.write(f"**Total League Budget:** ${total_budget:,}")
-    st.write(f"**Hitters Drafted:** {settings.total_hitters_drafted}")
-    st.write(f"**Pitchers Drafted:** {settings.total_pitchers_drafted}")
+    # Reset to defaults button
+    if st.button("Reset to Defaults", type="secondary"):
+        st.session_state.league_settings = {
+            "num_teams": DEFAULT_SETTINGS.num_teams,
+            "budget_per_team": DEFAULT_SETTINGS.budget_per_team,
+            "min_bid": DEFAULT_SETTINGS.min_bid,
+            "roster_spots": dict(DEFAULT_SETTINGS.roster_spots),
+        }
+        st.rerun()
 
-    st.info("Settings customization will be available in a future update.")
+    st.divider()
+
+    # Summary - recalculate from current session state
+    current_settings = get_current_settings()
+    st.subheader("League Summary")
+    total_budget = current_settings.num_teams * current_settings.budget_per_team
+    st.write(f"**Total League Budget:** ${total_budget:,}")
+    st.write(f"**Hitters Drafted:** {current_settings.total_hitters_drafted}")
+    st.write(f"**Pitchers Drafted:** {current_settings.total_pitchers_drafted}")
 
 
 if __name__ == "__main__":

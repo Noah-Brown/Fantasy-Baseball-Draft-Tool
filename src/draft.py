@@ -69,7 +69,8 @@ def draft_player(
     session: Session,
     player_id: int,
     team_id: int,
-    price: int
+    price: int,
+    settings: LeagueSettings = None
 ) -> DraftPick:
     """
     Draft a player to a team.
@@ -79,6 +80,7 @@ def draft_player(
         player_id: ID of the player to draft
         team_id: ID of the team drafting
         price: Auction price paid
+        settings: League settings for auto-recalculation (uses DEFAULT_SETTINGS if None)
 
     Returns:
         The created DraftPick
@@ -86,6 +88,11 @@ def draft_player(
     Raises:
         ValueError: If player already drafted or team doesn't have budget
     """
+    from .values import calculate_remaining_player_values
+
+    if settings is None:
+        settings = DEFAULT_SETTINGS
+
     # Get player and team
     player = session.get(Player, player_id)
     team = session.get(Team, team_id)
@@ -128,10 +135,11 @@ def draft_player(
     player.is_drafted = True
     player.draft_pick_id = pick.id
 
-    # Mark values as stale
-    draft_state.values_stale = True
-
     session.commit()
+
+    # Auto-recalculate remaining player values
+    calculate_remaining_player_values(session, settings)
+
     return pick
 
 
@@ -155,17 +163,23 @@ def undo_last_pick(session: Session) -> Player | None:
     return undo_pick(session, pick.id)
 
 
-def undo_pick(session: Session, pick_id: int) -> Player | None:
+def undo_pick(session: Session, pick_id: int, settings: LeagueSettings = None) -> Player | None:
     """
     Undo a specific draft pick.
 
     Args:
         session: Database session
         pick_id: ID of the pick to undo
+        settings: League settings for auto-recalculation (uses DEFAULT_SETTINGS if None)
 
     Returns:
         The player who was undrafted, or None if pick not found
     """
+    from .values import calculate_remaining_player_values
+
+    if settings is None:
+        settings = DEFAULT_SETTINGS
+
     pick = session.get(DraftPick, pick_id)
 
     if not pick:
@@ -181,12 +195,11 @@ def undo_pick(session: Session, pick_id: int) -> Player | None:
     # Delete the pick
     session.delete(pick)
 
-    # Mark values as stale
-    draft_state = get_draft_state(session)
-    if draft_state:
-        draft_state.values_stale = True
-
     session.commit()
+
+    # Auto-recalculate remaining player values
+    calculate_remaining_player_values(session, settings)
+
     return player
 
 

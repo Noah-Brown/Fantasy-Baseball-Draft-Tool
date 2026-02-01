@@ -142,16 +142,17 @@ class TestDraftPlayer:
         session.refresh(team)
         assert team.remaining_budget == 70
 
-    def test_draft_player_marks_values_stale(self, session, populated_db, test_settings):
-        """Test that drafting marks values as stale."""
+    def test_draft_player_auto_recalculates_values(self, session, populated_db, test_settings):
+        """Test that drafting auto-recalculates values (values_stale is False)."""
         initialize_draft(session, test_settings, "My Team")
         teams = get_all_teams(session)
         player = populated_db[0]
 
         draft_player(session, player.id, teams[0].id, 25)
 
+        # Values should not be stale because auto-recalculation happens
         state = get_draft_state(session)
-        assert state.values_stale is True
+        assert state.values_stale is False
 
     def test_draft_player_already_drafted_fails(self, session, populated_db, test_settings):
         """Test that drafting already-drafted player fails."""
@@ -250,22 +251,18 @@ class TestUndoFunctionality:
         session.refresh(populated_db[1])
         assert populated_db[1].is_drafted is True
 
-    def test_undo_marks_values_stale(self, session, populated_db, test_settings):
-        """Test that undo marks values as stale."""
+    def test_undo_auto_recalculates_values(self, session, populated_db, test_settings):
+        """Test that undo auto-recalculates values (values_stale is False)."""
         initialize_draft(session, test_settings, "My Team")
         teams = get_all_teams(session)
 
         draft_player(session, populated_db[0].id, teams[0].id, 25)
 
-        # Clear stale flag manually
-        state = get_draft_state(session)
-        state.values_stale = False
-        session.commit()
-
         undo_last_pick(session)
 
-        session.refresh(state)
-        assert state.values_stale is True
+        # Values should not be stale because auto-recalculation happens
+        state = get_draft_state(session)
+        assert state.values_stale is False
 
     def test_undo_no_picks_returns_none(self, session, populated_db, test_settings):
         """Test that undo with no picks returns None."""
