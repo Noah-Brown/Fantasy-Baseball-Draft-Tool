@@ -123,11 +123,13 @@ def import_pitchers_csv(session: Session, csv_path: str | Path) -> int:
 def _extract_positions(row) -> str:
     """Extract position eligibility from a row."""
     # Fangraphs includes position in various columns
-    # Check for explicit position column
-    if "Pos" in row.index:
-        return str(row["Pos"])
-    if "Position" in row.index:
-        return str(row["Position"])
+    # Check for explicit position columns (case-insensitive search)
+    for col in row.index:
+        col_lower = col.lower().strip()
+        if col_lower in ("pos", "position", "positions"):
+            val = row[col]
+            if pd.notna(val) and str(val).strip():
+                return str(val).strip()
 
     # Some exports have position in the name like "Mike Trout (CF)"
     name = str(row.get("Name", ""))
@@ -135,6 +137,14 @@ def _extract_positions(row) -> str:
         start = name.rfind("(") + 1
         end = name.rfind(")")
         return name[start:end]
+
+    # Check for minpos column (Fangraphs uses this sometimes)
+    if "minpos" in [c.lower() for c in row.index]:
+        for col in row.index:
+            if col.lower() == "minpos":
+                val = row[col]
+                if pd.notna(val) and str(val).strip():
+                    return str(val).strip()
 
     return ""
 
