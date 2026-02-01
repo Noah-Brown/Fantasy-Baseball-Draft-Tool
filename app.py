@@ -31,6 +31,7 @@ from src.draft import (
     calculate_max_bid,
     get_team_roster_needs,
     calculate_bid_impact,
+    get_position_scarcity,
 )
 from src.targets import (
     add_target,
@@ -540,6 +541,32 @@ def show_draft_room(session):
                     st.caption(f"Value: ${b['value']:.0f} | Max: ${b['max_bid']} | +${b['headroom']:.0f} headroom")
             if len(bargains) > 4:
                 st.caption(f"... and {len(bargains) - 4} more. See My Targets for full list.")
+        st.divider()
+
+    # Positional scarcity warnings
+    scarcity = get_position_scarcity(session, get_current_settings())
+    if scarcity:
+        critical = {p: s for p, s in scarcity.items() if s['level'] == 'critical'}
+        medium = {p: s for p, s in scarcity.items() if s['level'] == 'medium'}
+        low = {p: s for p, s in scarcity.items() if s['level'] == 'low'}
+
+        with st.container():
+            if critical:
+                positions_str = ", ".join(critical.keys())
+                st.error(f"🚨 **SCARCITY ALERT**: Only 0-1 quality players left at: {positions_str}")
+            if medium:
+                positions_str = ", ".join(medium.keys())
+                st.warning(f"⚠️ **Position Warning**: Only 2 quality players left at: {positions_str}")
+            if low:
+                positions_str = ", ".join(low.keys())
+                st.info(f"📊 **Getting Thin**: Only 3 quality players left at: {positions_str}")
+
+            # Expandable detail showing top available at scarce positions
+            with st.expander("View Scarce Position Details", expanded=False):
+                for pos, info in scarcity.items():
+                    st.markdown(f"**{pos}** ({info['count']} quality remaining)")
+                    for player in info['top_available']:
+                        st.caption(f"  • {player.name} - ${player.dollar_value:.0f}")
         st.divider()
 
     # Max Bid Calculator and Recalculate button row
