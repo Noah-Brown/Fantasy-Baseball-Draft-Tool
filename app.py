@@ -22,6 +22,9 @@ from src.draft import (
     get_draft_state,
     get_all_teams,
     get_user_team,
+    calculate_max_bid,
+    get_team_roster_needs,
+    calculate_bid_impact,
 )
 from src.targets import (
     add_target,
@@ -446,6 +449,27 @@ def show_draft_room(session):
                     key="draft_price",
                 )
 
+                # Max bid calculator for selected team
+                selected_team = session.get(Team, selected_team_id)
+                if selected_team:
+                    max_bid_info = calculate_max_bid(session, selected_team, get_current_settings())
+
+                    # Show max affordable bid
+                    st.caption(f"💰 Max affordable bid: **${max_bid_info['max_bid']}**")
+
+                    # Show warning if price exceeds max bid
+                    if price > max_bid_info['max_bid']:
+                        st.warning(f"⚠️ Over max by ${price - max_bid_info['max_bid']}!")
+                    elif price == max_bid_info['max_bid']:
+                        st.info("This is your max affordable bid")
+
+                    # Show roster needs
+                    if max_bid_info['spots_needed'] > 0:
+                        st.caption(
+                            f"Roster: {max_bid_info['hitters_needed']}H + "
+                            f"{max_bid_info['pitchers_needed']}P needed"
+                        )
+
                 if st.button("DRAFT", type="primary", width='stretch'):
                     try:
                         draft_player(session, selected_player_id, selected_team_id, price, get_current_settings())
@@ -456,19 +480,28 @@ def show_draft_room(session):
             else:
                 st.info("No available players")
 
-            # Team budgets summary
+            # Team budgets summary with max bids
             st.divider()
             st.subheader("Team Budgets")
 
             for team in teams:
-                col1, col2 = st.columns([2, 1])
-                with col1:
-                    label = team.name
-                    if team.is_user_team:
-                        label += " (You)"
-                    st.text(label)
-                with col2:
-                    st.text(f"${team.remaining_budget}")
+                max_info = calculate_max_bid(session, team, get_current_settings())
+                roster_info = get_team_roster_needs(session, team, get_current_settings())
+
+                label = team.name
+                if team.is_user_team:
+                    label += " ⭐"
+
+                with st.container():
+                    st.markdown(f"**{label}**")
+                    col1, col2, col3 = st.columns(3)
+                    with col1:
+                        st.caption(f"${team.remaining_budget}")
+                    with col2:
+                        st.caption(f"Max: ${max_info['max_bid']}")
+                    with col3:
+                        spots = roster_info['total_needed']
+                        st.caption(f"{spots} left")
 
             # Reset draft button
             st.divider()
@@ -497,8 +530,56 @@ def show_draft_room(session):
                 st.caption(f"... and {len(bargains) - 4} more. See My Targets for full list.")
         st.divider()
 
-    # Manual recalculate values button (backup option - values auto-update after each pick)
+    # Max Bid Calculator and Recalculate button row
     col1, col2 = st.columns([3, 1])
+
+    with col1:
+        # Expandable max bid calculator
+        with st.expander("💰 Max Bid Calculator", expanded=False):
+            user_team = get_user_team(session)
+            if user_team:
+                max_info = calculate_max_bid(session, user_team, get_current_settings())
+                roster_info = get_team_roster_needs(session, user_team, get_current_settings())
+
+                # Summary metrics
+                mcol1, mcol2, mcol3, mcol4 = st.columns(4)
+                mcol1.metric("Max Bid", f"${max_info['max_bid']}")
+                mcol2.metric("Budget Left", f"${max_info['remaining_budget']}")
+                mcol3.metric("Spots Needed", max_info['spots_needed'])
+                mcol4.metric("Reserved", f"${max_info['reserved_for_roster']}")
+
+                st.caption(
+                    f"Roster needs: {max_info['hitters_needed']} hitters, "
+                    f"{max_info['pitchers_needed']} pitchers"
+                )
+
+                st.divider()
+
+                # Bid impact calculator
+                st.markdown("**What-If Calculator**")
+                test_bid = st.number_input(
+                    "Test bid amount",
+                    min_value=1,
+                    max_value=max_info['remaining_budget'],
+                    value=min(max_info['max_bid'], max_info['remaining_budget']),
+                    key="test_bid_amount",
+                )
+
+                impact = calculate_bid_impact(session, user_team, test_bid, get_current_settings())
+
+                if impact['is_affordable']:
+                    st.success(f"✅ ${test_bid} is affordable")
+                else:
+                    st.error(f"❌ ${test_bid} exceeds max by ${impact['over_max_by']}")
+
+                icol1, icol2, icol3 = st.columns(3)
+                icol1.metric("Budget After", f"${impact['remaining_after']}")
+                icol2.metric("Spots After", impact['spots_after'])
+                icol3.metric("Avg/Player After", f"${impact['avg_per_player_after']}")
+
+                if impact['spots_after'] > 0:
+                    st.caption(f"Max bid for next player: ${impact['max_bid_after']}")
+
     with col2:
         if st.button("Recalculate Values", type="secondary"):
             try:
