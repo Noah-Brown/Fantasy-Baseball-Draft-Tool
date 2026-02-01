@@ -42,6 +42,7 @@ from src.targets import (
     clear_all_targets,
     get_available_targets_below_value,
 )
+from src.components import inject_keyboard_shortcuts, inject_keyboard_hint
 
 # Page configuration
 st.set_page_config(
@@ -49,6 +50,10 @@ st.set_page_config(
     page_icon="⚾",
     layout="wide",
 )
+
+# Inject keyboard shortcuts for quick search
+inject_keyboard_shortcuts()
+inject_keyboard_hint()
 
 # Initialize database
 @st.cache_resource
@@ -236,6 +241,7 @@ def show_player_database(session):
         search = st.text_input(
             "Search Player",
             placeholder="Player name...",
+            key="db_search",
         )
 
     # Build query

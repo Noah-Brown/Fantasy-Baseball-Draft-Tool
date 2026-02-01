@@ -211,7 +211,7 @@ Steamer CSV → Import → Player DB → SGP Calculation → Dollar Values
 - [x] 7. Max Affordable Bid Calculator
 - [ ] 8. Opponent Needs Tracker
 - [ ] 9. Budget Pressure Alerts
-- [ ] 10. Quick Search / Hotkey
+- [x] 10. Quick Search / Hotkey
 - [ ] 11. Nomination Queue
 - [ ] 12. One-Click Draft
 - [ ] 13. Sound/Visual Alerts
