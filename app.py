@@ -896,6 +896,8 @@ def show_draft_room(session):
         styled_df = df.style.apply(highlight_targets, axis=1)
         if sgp_cols:
             styled_df = styled_df.applymap(style_sgp, subset=sgp_cols)
+            # Format SGP columns to exactly 2 decimal places
+            styled_df = styled_df.format({col: "{:.2f}" for col in sgp_cols})
 
         st.dataframe(
             styled_df,
