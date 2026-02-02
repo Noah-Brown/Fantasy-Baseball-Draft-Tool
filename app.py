@@ -884,7 +884,18 @@ def show_draft_room(session):
                     return ["background-color: #fff9c4"] * len(row)  # Light yellow for targets
             return [""] * len(row)
 
+        # Identify SGP columns for color-coding
+        sgp_cols = []
+        if show_category_sgp and player_type != "All":
+            if player_type == "Hitters":
+                sgp_cols = [f"{cat.upper()} SGP" for cat in ["r", "hr", "rbi", "sb", "avg"]]
+            elif player_type == "Pitchers":
+                sgp_cols = [f"{cat.upper()} SGP" for cat in ["w", "sv", "k", "era", "whip"]]
+            sgp_cols = [c for c in sgp_cols if c in df.columns]
+
         styled_df = df.style.apply(highlight_targets, axis=1)
+        if sgp_cols:
+            styled_df = styled_df.applymap(style_sgp, subset=sgp_cols)
 
         st.dataframe(
             styled_df,
@@ -1186,6 +1197,26 @@ def style_surplus(val):
         return 'background-color: #FFFFE0'  # Light yellow (fair/slight overpay)
     else:
         return 'background-color: #FFB6C1'  # Light pink/red (significant overpay)
+
+
+def style_sgp(val):
+    """Apply color gradient based on SGP value."""
+    if pd.isna(val):
+        return ''
+    if val >= 2.0:
+        return 'background-color: #2E7D32; color: white; font-weight: bold'
+    elif val >= 1.0:
+        return 'background-color: #66BB6A; color: #1B5E20; font-weight: bold'
+    elif val >= 0.5:
+        return 'background-color: #A5D6A7; color: #1B5E20'
+    elif val >= -0.5:
+        return ''  # Neutral
+    elif val >= -1.0:
+        return 'background-color: #FFCDD2; color: #B71C1C'
+    elif val >= -2.0:
+        return 'background-color: #EF9A9A; color: #B71C1C; font-weight: bold'
+    else:
+        return 'background-color: #E57373; color: white; font-weight: bold'
 
 
 def create_category_bar_chart(analysis: dict) -> alt.Chart:
