@@ -222,3 +222,23 @@ Steamer CSV → Import → Player DB → SGP Calculation → Dollar Values
 - [ ] 18. Mobile/Tablet View
 - [ ] 19. Draft Notes
 - [ ] 20. Undo with Confirmation
+
+---
+
+## Future Integrations
+
+### Yahoo Fantasy API Integration
+- Connect to Yahoo Fantasy Sports API for live league data
+- Potential features:
+  - Import league settings automatically (roster spots, categories, teams)
+  - Sync draft picks in real-time during live drafts
+  - Pull actual league standings and stats post-draft
+  - Import keeper values and auction budgets
+- Requires OAuth authentication setup
+- Documentation: https://developer.yahoo.com/fantasysports/guide/
+
+---
+
+## Version History
+
+- **v0.0** - Initial development release with core functionality
