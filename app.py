@@ -32,8 +32,6 @@ from src.draft import (
     get_team_roster_needs,
     calculate_bid_impact,
     get_position_scarcity,
-    get_best_available_by_position,
-    calculate_inflation,
 )
 from src.targets import (
     add_target,
@@ -158,7 +156,12 @@ def get_current_settings() -> LeagueSettings:
             "budget_per_team": DEFAULT_SETTINGS.budget_per_team,
             "min_bid": DEFAULT_SETTINGS.min_bid,
             "roster_spots": dict(DEFAULT_SETTINGS.roster_spots),
+            "use_positional_adjustments": DEFAULT_SETTINGS.use_positional_adjustments,
         }
+
+    # Ensure use_positional_adjustments exists (for existing sessions)
+    if "use_positional_adjustments" not in st.session_state.league_settings:
+        st.session_state.league_settings["use_positional_adjustments"] = DEFAULT_SETTINGS.use_positional_adjustments
 
     # Build LeagueSettings from session state
     state = st.session_state.league_settings
@@ -167,6 +170,7 @@ def get_current_settings() -> LeagueSettings:
         budget_per_team=state["budget_per_team"],
         min_bid=state["min_bid"],
         roster_spots=state["roster_spots"],
+        use_positional_adjustments=state.get("use_positional_adjustments", True),
     )
 
 
@@ -580,112 +584,6 @@ def show_draft_room(session):
                         st.caption(f"  • {player.name} - ${player.dollar_value:.0f}")
         st.divider()
 
-    # Best Available by Position
-    with st.expander("📊 Best Available by Position", expanded=False):
-        best_available = get_best_available_by_position(session, top_n=5)
-
-        # Group positions into categories for cleaner display
-        infield_positions = ["C", "1B", "2B", "3B", "SS", "CI", "MI"]
-        outfield_positions = ["OF"]
-        pitcher_positions = ["SP", "RP"]
-
-        st.markdown("### Infielders")
-        cols = st.columns(4)
-        for idx, pos in enumerate(infield_positions[:4]):
-            with cols[idx]:
-                st.markdown(f"**{pos}**")
-                for player in best_available.get(pos, []):
-                    value_str = f"${player.dollar_value:.0f}" if player.dollar_value else "-"
-                    st.caption(f"{player.name} ({value_str})")
-                if not best_available.get(pos):
-                    st.caption("No players available")
-
-        cols = st.columns(4)
-        for idx, pos in enumerate(infield_positions[4:]):
-            with cols[idx]:
-                st.markdown(f"**{pos}**")
-                for player in best_available.get(pos, []):
-                    value_str = f"${player.dollar_value:.0f}" if player.dollar_value else "-"
-                    st.caption(f"{player.name} ({value_str})")
-                if not best_available.get(pos):
-                    st.caption("No players available")
-
-        st.markdown("### Outfielders")
-        cols = st.columns(4)
-        with cols[0]:
-            st.markdown("**OF**")
-            for player in best_available.get("OF", []):
-                value_str = f"${player.dollar_value:.0f}" if player.dollar_value else "-"
-                st.caption(f"{player.name} ({value_str})")
-            if not best_available.get("OF"):
-                st.caption("No players available")
-
-        st.markdown("### Pitchers")
-        cols = st.columns(4)
-        for idx, pos in enumerate(pitcher_positions):
-            with cols[idx]:
-                st.markdown(f"**{pos}**")
-                for player in best_available.get(pos, []):
-                    value_str = f"${player.dollar_value:.0f}" if player.dollar_value else "-"
-                    st.caption(f"{player.name} ({value_str})")
-                if not best_available.get(pos):
-                    st.caption("No players available")
-
-    st.divider()
-
-    # Inflation/Deflation Tracker
-    inflation = calculate_inflation(session)
-    if inflation['num_picks'] > 0:
-        rate = inflation['inflation_rate']
-        rate_pct = rate * 100
-
-        # Show headline indicator
-        if abs(rate_pct) < 2:
-            st.info(f"📊 **Market Neutral**: Prices tracking projections ({rate_pct:+.1f}%)")
-        elif rate_pct >= 2:
-            st.warning(f"📈 **Inflation Alert**: Prices running {rate_pct:+.1f}% above projections")
-        else:
-            st.success(f"📉 **Deflation**: Prices running {rate_pct:+.1f}% below projections")
-
-        with st.expander("📊 Inflation/Deflation Details", expanded=False):
-            # Summary metrics
-            col1, col2, col3, col4 = st.columns(4)
-            col1.metric("Inflation Rate", f"{rate_pct:+.1f}%")
-            col2.metric("Total Spent", f"${inflation['total_spent']}")
-            col3.metric("Projected Value", f"${inflation['total_projected_value']:.0f}")
-            col4.metric("Picks", inflation['num_picks'])
-
-            st.divider()
-
-            # Overpay vs bargain breakdown
-            col1, col2, col3 = st.columns(3)
-            col1.metric("Overpays", inflation['overpays'])
-            col2.metric("Bargains", inflation['bargains'])
-            col3.metric("Avg Difference", f"${inflation['avg_difference']:+.1f}")
-
-            # By player type
-            if inflation['by_type']:
-                st.divider()
-                st.markdown("**By Player Type**")
-                type_cols = st.columns(len(inflation['by_type']))
-                for idx, (ptype, stats) in enumerate(inflation['by_type'].items()):
-                    with type_cols[idx]:
-                        type_rate = stats['inflation_rate'] * 100
-                        st.metric(
-                            f"{ptype.title()}s",
-                            f"{type_rate:+.1f}%",
-                            f"{stats['num_picks']} picks"
-                        )
-
-            # Recent trend
-            if inflation['num_picks'] >= 5:
-                st.divider()
-                recent_pct = inflation['recent_trend'] * 100
-                trend_label = "heating up" if recent_pct > rate_pct else "cooling down"
-                st.caption(f"Recent trend (last 10 picks): {recent_pct:+.1f}% — market is {trend_label}")
-
-        st.divider()
-
     # Max Bid Calculator and Recalculate button row
     col1, col2 = st.columns([3, 1])
 
@@ -884,20 +782,7 @@ def show_draft_room(session):
                     return ["background-color: #fff9c4"] * len(row)  # Light yellow for targets
             return [""] * len(row)
 
-        # Identify SGP columns for color-coding
-        sgp_cols = []
-        if show_category_sgp and player_type != "All":
-            if player_type == "Hitters":
-                sgp_cols = [f"{cat.upper()} SGP" for cat in ["r", "hr", "rbi", "sb", "avg"]]
-            elif player_type == "Pitchers":
-                sgp_cols = [f"{cat.upper()} SGP" for cat in ["w", "sv", "k", "era", "whip"]]
-            sgp_cols = [c for c in sgp_cols if c in df.columns]
-
         styled_df = df.style.apply(highlight_targets, axis=1)
-        if sgp_cols:
-            styled_df = styled_df.applymap(style_sgp, subset=sgp_cols)
-            # Format SGP columns to exactly 2 decimal places
-            styled_df = styled_df.format({col: "{:.2f}" for col in sgp_cols})
 
         st.dataframe(
             styled_df,
@@ -1199,26 +1084,6 @@ def style_surplus(val):
         return 'background-color: #FFFFE0'  # Light yellow (fair/slight overpay)
     else:
         return 'background-color: #FFB6C1'  # Light pink/red (significant overpay)
-
-
-def style_sgp(val):
-    """Apply color gradient based on SGP value."""
-    if pd.isna(val):
-        return ''
-    if val >= 2.0:
-        return 'background-color: #2E7D32; color: white; font-weight: bold'
-    elif val >= 1.0:
-        return 'background-color: #66BB6A; color: #1B5E20; font-weight: bold'
-    elif val >= 0.5:
-        return 'background-color: #A5D6A7; color: #1B5E20'
-    elif val >= -0.5:
-        return ''  # Neutral
-    elif val >= -1.0:
-        return 'background-color: #FFCDD2; color: #B71C1C'
-    elif val >= -2.0:
-        return 'background-color: #EF9A9A; color: #B71C1C; font-weight: bold'
-    else:
-        return 'background-color: #E57373; color: white; font-weight: bold'
 
 
 def create_category_bar_chart(analysis: dict) -> alt.Chart:
@@ -1851,6 +1716,20 @@ def show_settings_page(session):
         st.markdown("**Pitching (5x5)**")
         st.text(", ".join(settings.pitching_categories))
 
+        st.divider()
+
+        st.subheader("Value Calculation")
+        use_pos_adj = st.checkbox(
+            "Use Positional Adjustments",
+            value=st.session_state.league_settings.get("use_positional_adjustments", True),
+            key="settings_positional_adj",
+            help="Adjust player values based on positional scarcity (FanGraphs-style replacement level methodology)",
+        )
+        st.session_state.league_settings["use_positional_adjustments"] = use_pos_adj
+
+        if use_pos_adj:
+            st.caption("Players at scarce positions (C, SS, 2B) will be valued higher relative to deep positions (OF, 1B)")
+
     st.divider()
 
     st.subheader("Roster Spots")
@@ -1911,6 +1790,7 @@ def show_settings_page(session):
             "budget_per_team": DEFAULT_SETTINGS.budget_per_team,
             "min_bid": DEFAULT_SETTINGS.min_bid,
             "roster_spots": dict(DEFAULT_SETTINGS.roster_spots),
+            "use_positional_adjustments": DEFAULT_SETTINGS.use_positional_adjustments,
         }
         st.rerun()
 
@@ -1923,6 +1803,34 @@ def show_settings_page(session):
     st.write(f"**Total League Budget:** ${total_budget:,}")
     st.write(f"**Hitters Drafted:** {current_settings.total_hitters_drafted}")
     st.write(f"**Pitchers Drafted:** {current_settings.total_pitchers_drafted}")
+
+    # Positional demand breakdown (when positional adjustments enabled)
+    if current_settings.use_positional_adjustments:
+        st.divider()
+        st.subheader("Positional Demand")
+        st.caption("Number of players at each position that will be drafted league-wide (affects replacement level)")
+
+        positional_demand = current_settings.get_positional_demand()
+
+        # Split into hitter and pitcher positions
+        hitter_demand = {pos: positional_demand.get(pos, 0) for pos in ["C", "1B", "2B", "3B", "SS", "OF"]}
+        pitcher_demand = {pos: positional_demand.get(pos, 0) for pos in ["SP", "RP"]}
+
+        col1, col2 = st.columns(2)
+
+        with col1:
+            st.markdown("**Hitters**")
+            for pos, count in hitter_demand.items():
+                if count > 0:
+                    st.write(f"{pos}: {count} players")
+
+        with col2:
+            st.markdown("**Pitchers**")
+            for pos, count in pitcher_demand.items():
+                if count > 0:
+                    st.write(f"{pos}: {count} players")
+
+        st.caption("Higher demand = lower replacement level = less positional value boost")
 
 
 if __name__ == "__main__":

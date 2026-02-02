@@ -23,6 +23,10 @@ def calculate_all_player_values(session: Session, settings: LeagueSettings = Non
     """
     Main entry point - calculates and updates all player values.
 
+    Uses positional replacement level adjustments if enabled in settings.
+    This adjusts player values based on positional scarcity - catchers in a
+    2C league will be worth more because the replacement level is lower.
+
     Args:
         session: Database session
         settings: League settings (uses DEFAULT_SETTINGS if None)
@@ -36,27 +40,262 @@ def calculate_all_player_values(session: Session, settings: LeagueSettings = Non
     hitters = get_all_hitters(session)
     pitchers = get_all_pitchers(session)
 
-    # Calculate values for each pool
-    hitter_count = _calculate_pool_values(
-        players=hitters,
-        pool_size=settings.total_hitters_drafted,
-        budget=settings.total_league_budget * settings.hitter_budget_pct,
-        categories=settings.hitting_categories,
-        player_type="hitter",
-        min_bid=settings.min_bid,
-    )
+    if settings.use_positional_adjustments:
+        # Use positional replacement level methodology
+        hitter_count = _calculate_positional_values(
+            players=hitters,
+            budget=settings.total_league_budget * settings.hitter_budget_pct,
+            categories=settings.hitting_categories,
+            player_type="hitter",
+            settings=settings,
+        )
 
-    pitcher_count = _calculate_pool_values(
-        players=pitchers,
-        pool_size=settings.total_pitchers_drafted,
-        budget=settings.total_league_budget * (1 - settings.hitter_budget_pct),
-        categories=settings.pitching_categories,
-        player_type="pitcher",
-        min_bid=settings.min_bid,
-    )
+        pitcher_count = _calculate_positional_values(
+            players=pitchers,
+            budget=settings.total_league_budget * (1 - settings.hitter_budget_pct),
+            categories=settings.pitching_categories,
+            player_type="pitcher",
+            settings=settings,
+        )
+    else:
+        # Use original pool-based calculation (no positional adjustments)
+        hitter_count = _calculate_pool_values(
+            players=hitters,
+            pool_size=settings.total_hitters_drafted,
+            budget=settings.total_league_budget * settings.hitter_budget_pct,
+            categories=settings.hitting_categories,
+            player_type="hitter",
+            min_bid=settings.min_bid,
+        )
+
+        pitcher_count = _calculate_pool_values(
+            players=pitchers,
+            pool_size=settings.total_pitchers_drafted,
+            budget=settings.total_league_budget * (1 - settings.hitter_budget_pct),
+            categories=settings.pitching_categories,
+            player_type="pitcher",
+            min_bid=settings.min_bid,
+        )
 
     session.commit()
     return hitter_count + pitcher_count
+
+
+def _calculate_positional_values(
+    players: list[Player],
+    budget: float,
+    categories: list[str],
+    player_type: str,
+    settings: LeagueSettings,
+) -> int:
+    """
+    Calculate player values using positional replacement level methodology.
+
+    This is the FanGraphs-style approach where each position has its own
+    replacement level based on how many players at that position are drafted.
+    Players eligible at multiple positions use their most valuable position.
+
+    Args:
+        players: List of players to value
+        budget: Total budget allocated to this pool (hitters or pitchers)
+        categories: Stat categories for this pool
+        player_type: "hitter" or "pitcher"
+        settings: League settings with roster configuration
+
+    Returns:
+        Number of players with values calculated
+    """
+    if not players:
+        return 0
+
+    min_bid = settings.min_bid
+    positional_demand = settings.get_positional_demand()
+
+    # Determine which positions this player type can fill
+    if player_type == "hitter":
+        relevant_positions = ["C", "1B", "2B", "3B", "SS", "OF"]
+    else:
+        relevant_positions = ["SP", "RP"]
+
+    # Step 1: Calculate preliminary value to rank players at each position
+    preliminary_values = []
+    for player in players:
+        prelim = _calculate_preliminary_value(player, categories, player_type)
+        preliminary_values.append((player, prelim))
+
+    # Sort by preliminary value (descending)
+    preliminary_values.sort(key=lambda x: x[1], reverse=True)
+
+    # Step 2: Calculate replacement level stats for each position
+    positional_replacement_stats = {}
+    for position in relevant_positions:
+        demand = positional_demand.get(position, 0)
+        if demand == 0:
+            continue
+
+        # Get players eligible for this position, sorted by preliminary value
+        position_players = []
+        for player, prelim in preliminary_values:
+            if _player_eligible_for_position(player, position):
+                position_players.append((player, prelim))
+
+        if len(position_players) >= demand:
+            # Replacement level is the player at the demand cutoff
+            replacement_player = position_players[demand - 1][0]
+        elif position_players:
+            # Not enough players - use worst available
+            replacement_player = position_players[-1][0]
+        else:
+            # No players at this position - use zeros
+            replacement_player = None
+
+        if replacement_player:
+            positional_replacement_stats[position] = _get_player_stats(
+                replacement_player, categories, player_type
+            )
+        else:
+            # Default to zeros
+            positional_replacement_stats[position] = {cat.lower(): 0 for cat in categories}
+
+    # Step 3: Calculate SGP denominators using the entire player pool
+    # We need a pool size for denominator calculation - use total drafted
+    if player_type == "hitter":
+        pool_size = int(settings.total_hitters_drafted)
+    else:
+        pool_size = int(settings.total_pitchers_drafted)
+
+    draftable_pool = [p for p, _ in preliminary_values[:pool_size]]
+    if not draftable_pool:
+        return 0
+
+    denominators = _calculate_sgp_denominators(draftable_pool, categories, player_type)
+
+    # Step 4: Calculate SGP for each player using their best position's replacement level
+    player_sgps = []
+    for player, prelim in preliminary_values[:pool_size]:
+        # Find the best position for this player (highest SGP)
+        best_sgp = None
+        best_breakdown = None
+        best_position = None
+
+        player_positions = _get_player_positions(player, player_type)
+
+        for position in player_positions:
+            if position not in positional_replacement_stats:
+                continue
+
+            replacement_stats = positional_replacement_stats[position]
+            sgp, breakdown = _calculate_player_sgp(
+                player,
+                categories,
+                player_type,
+                replacement_stats,
+                denominators
+            )
+
+            if best_sgp is None or sgp > best_sgp:
+                best_sgp = sgp
+                best_breakdown = breakdown
+                best_position = position
+
+        # If no position match found, use overall replacement (fallback)
+        if best_sgp is None:
+            # Use the position with highest demand as fallback
+            fallback_position = max(
+                positional_replacement_stats.keys(),
+                key=lambda p: positional_demand.get(p, 0),
+                default=None
+            )
+            if fallback_position:
+                replacement_stats = positional_replacement_stats[fallback_position]
+                best_sgp, best_breakdown = _calculate_player_sgp(
+                    player,
+                    categories,
+                    player_type,
+                    replacement_stats,
+                    denominators
+                )
+            else:
+                best_sgp = 0
+                best_breakdown = {cat.lower(): 0 for cat in categories}
+
+        player.sgp = best_sgp
+        player.sgp_breakdown = best_breakdown
+        player_sgps.append((player, best_sgp))
+
+    # Step 5: Calculate total positive SGP
+    total_positive_sgp = sum(max(0, sgp) for _, sgp in player_sgps)
+
+    if total_positive_sgp <= 0:
+        # Edge case: no positive SGP values
+        for player, _ in player_sgps:
+            player.dollar_value = min_bid
+        return len(player_sgps)
+
+    # Step 6: Calculate $/SGP
+    negative_sgp_players = sum(1 for _, sgp in player_sgps if sgp <= 0)
+    adjusted_budget = budget - (negative_sgp_players * min_bid)
+    dollars_per_sgp = adjusted_budget / total_positive_sgp
+
+    # Step 7: Assign dollar values
+    for player, sgp in player_sgps:
+        if sgp > 0:
+            player.dollar_value = max(min_bid, sgp * dollars_per_sgp)
+        else:
+            player.dollar_value = min_bid
+
+    # Players outside the draftable pool get minimum value and zero SGP
+    for player, _ in preliminary_values[pool_size:]:
+        player.sgp = 0
+        player.dollar_value = min_bid
+        player.sgp_breakdown = {cat.lower(): 0.0 for cat in categories}
+
+    return len(players)
+
+
+def _player_eligible_for_position(player: Player, position: str) -> bool:
+    """Check if a player is eligible for a specific position."""
+    player_positions = player.position_list
+    if not player_positions:
+        return False
+
+    # Direct position match
+    if position in player_positions:
+        return True
+
+    # Handle DH - can play any hitter position for eligibility
+    if "DH" in player_positions and position in ["1B", "OF"]:
+        return True
+
+    return False
+
+
+def _get_player_positions(player: Player, player_type: str) -> list[str]:
+    """Get list of positions player is eligible for (for replacement level purposes)."""
+    positions = player.position_list
+
+    if not positions:
+        # Default position based on player type
+        return ["OF"] if player_type == "hitter" else ["SP"]
+
+    # Map player positions to our standard positions
+    result = []
+    for pos in positions:
+        if pos in ["C", "1B", "2B", "3B", "SS", "OF", "SP", "RP"]:
+            result.append(pos)
+        elif pos == "LF" or pos == "CF" or pos == "RF":
+            if "OF" not in result:
+                result.append("OF")
+        elif pos == "DH":
+            # DH-only players: treat as 1B or OF for valuation
+            if "1B" not in result:
+                result.append("1B")
+
+    # Ensure at least one position
+    if not result:
+        return ["OF"] if player_type == "hitter" else ["SP"]
+
+    return result
 
 
 def _calculate_pool_values(
@@ -335,8 +574,8 @@ def calculate_remaining_player_values(session: Session, settings: LeagueSettings
     Recalculate values for remaining undrafted players.
 
     Adjusts pool sizes based on remaining roster slots and uses
-    remaining budget across all teams. Clears the values_stale flag
-    after calculation.
+    remaining budget across all teams. Uses positional adjustments
+    if enabled. Clears the values_stale flag after calculation.
 
     Args:
         session: Database session
@@ -368,23 +607,43 @@ def calculate_remaining_player_values(session: Session, settings: LeagueSettings
     hitter_budget = remaining_budget * settings.hitter_budget_pct
     pitcher_budget = remaining_budget * (1 - settings.hitter_budget_pct)
 
-    hitter_count = _calculate_pool_values(
-        players=hitters,
-        pool_size=remaining_hitter_slots,
-        budget=hitter_budget,
-        categories=settings.hitting_categories,
-        player_type="hitter",
-        min_bid=settings.min_bid,
-    )
+    if settings.use_positional_adjustments:
+        # Create adjusted settings with remaining slots for positional calculation
+        remaining_settings = _create_remaining_settings(session, settings)
 
-    pitcher_count = _calculate_pool_values(
-        players=pitchers,
-        pool_size=remaining_pitcher_slots,
-        budget=pitcher_budget,
-        categories=settings.pitching_categories,
-        player_type="pitcher",
-        min_bid=settings.min_bid,
-    )
+        hitter_count = _calculate_positional_values(
+            players=hitters,
+            budget=hitter_budget,
+            categories=settings.hitting_categories,
+            player_type="hitter",
+            settings=remaining_settings,
+        )
+
+        pitcher_count = _calculate_positional_values(
+            players=pitchers,
+            budget=pitcher_budget,
+            categories=settings.pitching_categories,
+            player_type="pitcher",
+            settings=remaining_settings,
+        )
+    else:
+        hitter_count = _calculate_pool_values(
+            players=hitters,
+            pool_size=remaining_hitter_slots,
+            budget=hitter_budget,
+            categories=settings.hitting_categories,
+            player_type="hitter",
+            min_bid=settings.min_bid,
+        )
+
+        pitcher_count = _calculate_pool_values(
+            players=pitchers,
+            pool_size=remaining_pitcher_slots,
+            budget=pitcher_budget,
+            categories=settings.pitching_categories,
+            player_type="pitcher",
+            min_bid=settings.min_bid,
+        )
 
     # Clear stale flag
     if draft_state:
@@ -392,6 +651,42 @@ def calculate_remaining_player_values(session: Session, settings: LeagueSettings
 
     session.commit()
     return hitter_count + pitcher_count
+
+
+def _create_remaining_settings(session: Session, settings: LeagueSettings) -> LeagueSettings:
+    """
+    Create adjusted settings reflecting remaining roster needs for positional calculations.
+
+    Args:
+        session: Database session
+        settings: Original league settings
+
+    Returns:
+        LeagueSettings with roster_spots adjusted for remaining needs
+    """
+    from .draft import get_remaining_positional_needs
+
+    # Get remaining positional needs across all teams
+    remaining_needs = get_remaining_positional_needs(session, settings)
+
+    # Create new settings with adjusted roster spots
+    # We use the remaining needs directly as the "roster spots" for calculation
+    adjusted_roster_spots = {}
+    for pos, count in remaining_needs.items():
+        # Convert total league needs back to "per team" by dividing by num_teams
+        # This is a simplification - the positional demand calculation will multiply back
+        adjusted_roster_spots[pos] = count / settings.num_teams
+
+    return LeagueSettings(
+        num_teams=settings.num_teams,
+        budget_per_team=settings.budget_per_team,
+        min_bid=settings.min_bid,
+        roster_spots=adjusted_roster_spots,
+        hitting_categories=settings.hitting_categories,
+        pitching_categories=settings.pitching_categories,
+        hitter_budget_pct=settings.hitter_budget_pct,
+        use_positional_adjustments=settings.use_positional_adjustments,
+    )
 
 
 def get_available_hitters(session: Session) -> list[Player]:

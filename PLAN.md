@@ -192,6 +192,10 @@ Steamer CSV → Import → Player DB → SGP Calculation → Dollar Values
 
 20. **Undo with Confirmation** - Batch undo or "correct last N picks" for fixing entry mistakes quickly.
 
+### Value Calculation Enhancements
+
+21. **Positional Price Adjustments** - Adjust player values based on positional scarcity using replacement level methodology. Critical for leagues with non-standard roster configurations (e.g., 2-catcher leagues). See detailed section below.
+
 ---
 
 ### Priority
@@ -222,6 +226,92 @@ Steamer CSV → Import → Player DB → SGP Calculation → Dollar Values
 - [ ] 18. Mobile/Tablet View
 - [ ] 19. Draft Notes
 - [ ] 20. Undo with Confirmation
+- [x] 21. Positional Price Adjustments
+
+---
+
+## Positional Price Adjustments (Future Feature)
+
+### Overview
+
+Positional price adjustments modify player values based on the scarcity of quality players at each position. In a two-catcher league, for example, catchers become more valuable because:
+- More catchers are drafted (24 instead of 12 in a 12-team league)
+- The replacement level catcher is significantly less productive
+- Good catchers have more "value above replacement"
+
+### Adjustment Methodologies
+
+There are four main approaches to positional adjustments:
+
+1. **Meritocracy Theory** - No position adjustments. Players are valued purely on projected stats regardless of position.
+
+2. **Apples-to-Apples Theory** - Compare players against others at their position rather than against all hitters. A player's value is based on how they compare to their positional peers.
+
+3. **Replacement Level Theory** (Most Common) - Adjust values so that the last rosterable player at each position is worth exactly $1. This naturally boosts scarce positions where the drop-off is steeper.
+
+4. **Communist Theory** - Distribute budget equally across all positions. Each position gets the same total dollar allocation.
+
+### Replacement Level Implementation
+
+The Replacement Level approach (used by FanGraphs Auction Calculator) works as follows:
+
+1. **Determine replacement level per position**: For each position, identify the Nth-ranked player where N = (teams × roster spots at that position)
+   - 1C league, 12 teams: 12th-best catcher is replacement level
+   - 2C league, 12 teams: 24th-best catcher is replacement level
+
+2. **Calculate Points/SGP Above Replacement**: Instead of using overall replacement level, subtract the positional replacement level stats:
+   ```
+   Positional SGP = (Player Stat - Replacement Stat at Position) / SGP Denominator
+   ```
+
+3. **The adjustment happens automatically**: Players at shallow positions (C, SS, 2B) gain value because their replacement level is lower. Players at deep positions (OF, 1B) lose some value.
+
+### Example: Two-Catcher League Impact
+
+In a standard 1C league vs 2C league for a 12-team format:
+
+| Position | 1C League Replacement | 2C League Replacement | Value Change |
+|----------|----------------------|----------------------|--------------|
+| C        | 12th catcher         | 24th catcher         | +$10-15      |
+| 1B       | ~18th ranked         | ~18th ranked         | No change    |
+| OF       | ~40th ranked         | ~40th ranked         | No change    |
+
+Top catchers can gain 2-3 rounds of draft value (or $10-15 in auction) in a 2C league.
+
+### Implementation Plan
+
+To add positional adjustments to this tool:
+
+1. **Add roster position counts to settings**: Track how many of each position are drafted league-wide
+2. **Calculate positional replacement levels**: Find the Nth player at each position
+3. **Modify SGP calculation**: Subtract positional replacement stats instead of overall replacement
+4. **Handle multi-position eligibility**: Players eligible at multiple positions get the most favorable adjustment
+5. **Allow toggle between methods**: Let users choose Meritocracy vs Replacement Level
+
+### Configuration Options
+
+```python
+# Example settings additions
+roster_slots_by_position = {
+    "C": 2,   # 2-catcher league
+    "1B": 1,
+    "2B": 1,
+    "SS": 1,
+    "3B": 1,
+    "OF": 3,
+    "UTIL": 1,
+    # etc.
+}
+
+position_adjustment_method = "replacement_level"  # or "none", "apples_to_apples"
+```
+
+### Sources
+
+- [Smart Fantasy Baseball - Replacement Level & Position Scarcity](https://www.smartfantasybaseball.com/2013/03/create-your-own-fantasy-baseball-rankings-part-6-accounting-for-replacement-level-and-position-scarcity/)
+- [Razzball - Position Adjustments](https://razzball.com/position-adjustments/)
+- [FanGraphs Auction Calculator](https://www.fangraphs.com/fantasy-tools/auction-calculator)
+- [Mastersball Valuation Theory](https://www.mastersball.com/index.php?option=com_content&view=article&id=5581:mastersball-valuation-theory-and-methodolgy)
 
 ---
 

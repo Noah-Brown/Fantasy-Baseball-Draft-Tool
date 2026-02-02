@@ -463,6 +463,51 @@ def calculate_bid_impact(
     }
 
 
+def get_remaining_positional_needs(session: Session, settings: LeagueSettings = None) -> dict[str, int]:
+    """
+    Calculate remaining positional needs across the league.
+
+    For each position, estimates how many more players at that position
+    will be drafted based on remaining roster slots and drafted player positions.
+
+    Args:
+        session: Database session
+        settings: League settings
+
+    Returns:
+        Dict mapping position codes to remaining demand count
+    """
+    if settings is None:
+        settings = DEFAULT_SETTINGS
+
+    # Get total positional demand
+    total_demand = settings.get_positional_demand()
+
+    # Count how many players at each position have been drafted
+    drafted_players = session.query(Player).filter(Player.is_drafted == True).all()
+
+    position_counts = {pos: 0 for pos in total_demand.keys()}
+    for player in drafted_players:
+        player_positions = player.position_list
+        # Assign player to their primary (first) position for counting
+        # This is a simplification - in reality draft positions are more complex
+        if player_positions:
+            primary_pos = player_positions[0]
+            # Map OF variants to OF
+            if primary_pos in ["LF", "CF", "RF"]:
+                primary_pos = "OF"
+            if primary_pos in position_counts:
+                position_counts[primary_pos] += 1
+
+    # Calculate remaining needs
+    remaining_needs = {}
+    for pos, demand in total_demand.items():
+        drafted = position_counts.get(pos, 0)
+        remaining_needs[pos] = max(0, demand - drafted)
+
+    return remaining_needs
+
+
 def get_position_scarcity(session: Session, settings: LeagueSettings = None, quality_threshold: int = 2):
     """
     Analyze positional scarcity for available players.
@@ -523,172 +568,3 @@ def get_position_scarcity(session: Session, settings: LeagueSettings = None, qua
             }
 
     return scarcity
-
-
-def get_best_available_by_position(session: Session, top_n: int = 5):
-    """
-    Get top N available players at each position, sorted by dollar value.
-
-    Args:
-        session: Database session
-        top_n: Number of top players to return per position (default: 5)
-
-    Returns:
-        Dict mapping position to list of top available players:
-        {
-            'C': [Player, Player, ...],
-            '1B': [Player, Player, ...],
-            ...
-        }
-    """
-    from sqlalchemy import or_
-    from .positions import SCARCITY_POSITIONS, expand_position
-
-    best_available = {}
-
-    for pos in SCARCITY_POSITIONS:
-        base_positions = expand_position(pos)
-
-        if base_positions and pos in ["CI", "MI"]:
-            # Composite: OR logic across constituents
-            position_filters = [Player.positions.contains(bp) for bp in base_positions]
-            query = session.query(Player).filter(
-                Player.is_drafted == False,
-                or_(*position_filters)
-            )
-        else:
-            query = session.query(Player).filter(
-                Player.is_drafted == False,
-                Player.positions.contains(pos)
-            )
-
-        best_available[pos] = query.order_by(Player.dollar_value.desc()).limit(top_n).all()
-
-    return best_available
-
-
-def calculate_inflation(session: Session):
-    """
-    Calculate inflation/deflation based on draft history.
-
-    Compares actual prices paid vs projected dollar values to determine
-    if the draft is running hot (inflation) or cold (deflation).
-
-    Args:
-        session: Database session
-
-    Returns:
-        Dict with inflation metrics:
-        {
-            'inflation_rate': 0.08,  # +8% inflation (prices > values)
-            'total_spent': 500,
-            'total_projected_value': 463,
-            'num_picks': 20,
-            'overpays': 12,  # Number of players bought above value
-            'bargains': 8,   # Number of players bought below value
-            'avg_difference': 1.85,  # Average $ over/under value per pick
-            'by_type': {
-                'hitter': {'inflation_rate': 0.10, 'num_picks': 15, ...},
-                'pitcher': {'inflation_rate': 0.04, 'num_picks': 5, ...}
-            },
-            'recent_trend': 0.12,  # Inflation rate of last 10 picks
-        }
-    """
-    picks = session.query(DraftPick).all()
-
-    if not picks:
-        return {
-            'inflation_rate': 0.0,
-            'total_spent': 0,
-            'total_projected_value': 0,
-            'num_picks': 0,
-            'overpays': 0,
-            'bargains': 0,
-            'avg_difference': 0.0,
-            'by_type': {},
-            'recent_trend': 0.0,
-        }
-
-    # Collect data for all picks
-    total_spent = 0
-    total_projected = 0
-    overpays = 0
-    bargains = 0
-    differences = []
-
-    by_type = {
-        'hitter': {'spent': 0, 'projected': 0, 'count': 0},
-        'pitcher': {'spent': 0, 'projected': 0, 'count': 0},
-    }
-
-    for pick in picks:
-        player = pick.player
-        if not player:
-            continue
-
-        price = pick.price
-        projected = player.dollar_value or 0
-
-        total_spent += price
-        total_projected += projected
-        differences.append(price - projected)
-
-        if price > projected:
-            overpays += 1
-        elif price < projected:
-            bargains += 1
-
-        ptype = player.player_type
-        if ptype in by_type:
-            by_type[ptype]['spent'] += price
-            by_type[ptype]['projected'] += projected
-            by_type[ptype]['count'] += 1
-
-    # Calculate overall inflation rate
-    if total_projected > 0:
-        inflation_rate = (total_spent - total_projected) / total_projected
-    else:
-        inflation_rate = 0.0
-
-    # Calculate per-type inflation
-    type_stats = {}
-    for ptype, data in by_type.items():
-        if data['count'] > 0 and data['projected'] > 0:
-            type_stats[ptype] = {
-                'inflation_rate': (data['spent'] - data['projected']) / data['projected'],
-                'num_picks': data['count'],
-                'total_spent': data['spent'],
-                'total_projected': data['projected'],
-            }
-
-    # Calculate recent trend (last 10 picks)
-    recent_picks = (
-        session.query(DraftPick)
-        .order_by(DraftPick.pick_number.desc())
-        .limit(10)
-        .all()
-    )
-
-    recent_spent = 0
-    recent_projected = 0
-    for pick in recent_picks:
-        if pick.player:
-            recent_spent += pick.price
-            recent_projected += pick.player.dollar_value or 0
-
-    if recent_projected > 0:
-        recent_trend = (recent_spent - recent_projected) / recent_projected
-    else:
-        recent_trend = 0.0
-
-    return {
-        'inflation_rate': inflation_rate,
-        'total_spent': total_spent,
-        'total_projected_value': total_projected,
-        'num_picks': len(picks),
-        'overpays': overpays,
-        'bargains': bargains,
-        'avg_difference': sum(differences) / len(differences) if differences else 0.0,
-        'by_type': type_stats,
-        'recent_trend': recent_trend,
-    }
