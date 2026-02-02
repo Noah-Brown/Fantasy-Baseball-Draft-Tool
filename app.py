@@ -33,6 +33,7 @@ from src.draft import (
     calculate_bid_impact,
     get_position_scarcity,
     get_best_available_by_position,
+    calculate_inflation,
 )
 from src.targets import (
     add_target,
@@ -632,6 +633,59 @@ def show_draft_room(session):
 
     st.divider()
 
+    # Inflation/Deflation Tracker
+    inflation = calculate_inflation(session)
+    if inflation['num_picks'] > 0:
+        rate = inflation['inflation_rate']
+        rate_pct = rate * 100
+
+        # Show headline indicator
+        if abs(rate_pct) < 2:
+            st.info(f"📊 **Market Neutral**: Prices tracking projections ({rate_pct:+.1f}%)")
+        elif rate_pct >= 2:
+            st.warning(f"📈 **Inflation Alert**: Prices running {rate_pct:+.1f}% above projections")
+        else:
+            st.success(f"📉 **Deflation**: Prices running {rate_pct:+.1f}% below projections")
+
+        with st.expander("📊 Inflation/Deflation Details", expanded=False):
+            # Summary metrics
+            col1, col2, col3, col4 = st.columns(4)
+            col1.metric("Inflation Rate", f"{rate_pct:+.1f}%")
+            col2.metric("Total Spent", f"${inflation['total_spent']}")
+            col3.metric("Projected Value", f"${inflation['total_projected_value']:.0f}")
+            col4.metric("Picks", inflation['num_picks'])
+
+            st.divider()
+
+            # Overpay vs bargain breakdown
+            col1, col2, col3 = st.columns(3)
+            col1.metric("Overpays", inflation['overpays'])
+            col2.metric("Bargains", inflation['bargains'])
+            col3.metric("Avg Difference", f"${inflation['avg_difference']:+.1f}")
+
+            # By player type
+            if inflation['by_type']:
+                st.divider()
+                st.markdown("**By Player Type**")
+                type_cols = st.columns(len(inflation['by_type']))
+                for idx, (ptype, stats) in enumerate(inflation['by_type'].items()):
+                    with type_cols[idx]:
+                        type_rate = stats['inflation_rate'] * 100
+                        st.metric(
+                            f"{ptype.title()}s",
+                            f"{type_rate:+.1f}%",
+                            f"{stats['num_picks']} picks"
+                        )
+
+            # Recent trend
+            if inflation['num_picks'] >= 5:
+                st.divider()
+                recent_pct = inflation['recent_trend'] * 100
+                trend_label = "heating up" if recent_pct > rate_pct else "cooling down"
+                st.caption(f"Recent trend (last 10 picks): {recent_pct:+.1f}% — market is {trend_label}")
+
+        st.divider()
+
     # Max Bid Calculator and Recalculate button row
     col1, col2 = st.columns([3, 1])
 
@@ -830,7 +884,18 @@ def show_draft_room(session):
                     return ["background-color: #fff9c4"] * len(row)  # Light yellow for targets
             return [""] * len(row)
 
+        # Identify SGP columns for color-coding
+        sgp_cols = []
+        if show_category_sgp and player_type != "All":
+            if player_type == "Hitters":
+                sgp_cols = [f"{cat.upper()} SGP" for cat in ["r", "hr", "rbi", "sb", "avg"]]
+            elif player_type == "Pitchers":
+                sgp_cols = [f"{cat.upper()} SGP" for cat in ["w", "sv", "k", "era", "whip"]]
+            sgp_cols = [c for c in sgp_cols if c in df.columns]
+
         styled_df = df.style.apply(highlight_targets, axis=1)
+        if sgp_cols:
+            styled_df = styled_df.applymap(style_sgp, subset=sgp_cols)
 
         st.dataframe(
             styled_df,
@@ -1132,6 +1197,26 @@ def style_surplus(val):
         return 'background-color: #FFFFE0'  # Light yellow (fair/slight overpay)
     else:
         return 'background-color: #FFB6C1'  # Light pink/red (significant overpay)
+
+
+def style_sgp(val):
+    """Apply color gradient based on SGP value."""
+    if pd.isna(val):
+        return ''
+    if val >= 2.0:
+        return 'background-color: #2E7D32; color: white; font-weight: bold'
+    elif val >= 1.0:
+        return 'background-color: #66BB6A; color: #1B5E20; font-weight: bold'
+    elif val >= 0.5:
+        return 'background-color: #A5D6A7; color: #1B5E20'
+    elif val >= -0.5:
+        return ''  # Neutral
+    elif val >= -1.0:
+        return 'background-color: #FFCDD2; color: #B71C1C'
+    elif val >= -2.0:
+        return 'background-color: #EF9A9A; color: #B71C1C; font-weight: bold'
+    else:
+        return 'background-color: #E57373; color: white; font-weight: bold'
 
 
 def create_category_bar_chart(analysis: dict) -> alt.Chart:

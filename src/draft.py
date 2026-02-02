@@ -565,3 +565,130 @@ def get_best_available_by_position(session: Session, top_n: int = 5):
         best_available[pos] = query.order_by(Player.dollar_value.desc()).limit(top_n).all()
 
     return best_available
+
+
+def calculate_inflation(session: Session):
+    """
+    Calculate inflation/deflation based on draft history.
+
+    Compares actual prices paid vs projected dollar values to determine
+    if the draft is running hot (inflation) or cold (deflation).
+
+    Args:
+        session: Database session
+
+    Returns:
+        Dict with inflation metrics:
+        {
+            'inflation_rate': 0.08,  # +8% inflation (prices > values)
+            'total_spent': 500,
+            'total_projected_value': 463,
+            'num_picks': 20,
+            'overpays': 12,  # Number of players bought above value
+            'bargains': 8,   # Number of players bought below value
+            'avg_difference': 1.85,  # Average $ over/under value per pick
+            'by_type': {
+                'hitter': {'inflation_rate': 0.10, 'num_picks': 15, ...},
+                'pitcher': {'inflation_rate': 0.04, 'num_picks': 5, ...}
+            },
+            'recent_trend': 0.12,  # Inflation rate of last 10 picks
+        }
+    """
+    picks = session.query(DraftPick).all()
+
+    if not picks:
+        return {
+            'inflation_rate': 0.0,
+            'total_spent': 0,
+            'total_projected_value': 0,
+            'num_picks': 0,
+            'overpays': 0,
+            'bargains': 0,
+            'avg_difference': 0.0,
+            'by_type': {},
+            'recent_trend': 0.0,
+        }
+
+    # Collect data for all picks
+    total_spent = 0
+    total_projected = 0
+    overpays = 0
+    bargains = 0
+    differences = []
+
+    by_type = {
+        'hitter': {'spent': 0, 'projected': 0, 'count': 0},
+        'pitcher': {'spent': 0, 'projected': 0, 'count': 0},
+    }
+
+    for pick in picks:
+        player = pick.player
+        if not player:
+            continue
+
+        price = pick.price
+        projected = player.dollar_value or 0
+
+        total_spent += price
+        total_projected += projected
+        differences.append(price - projected)
+
+        if price > projected:
+            overpays += 1
+        elif price < projected:
+            bargains += 1
+
+        ptype = player.player_type
+        if ptype in by_type:
+            by_type[ptype]['spent'] += price
+            by_type[ptype]['projected'] += projected
+            by_type[ptype]['count'] += 1
+
+    # Calculate overall inflation rate
+    if total_projected > 0:
+        inflation_rate = (total_spent - total_projected) / total_projected
+    else:
+        inflation_rate = 0.0
+
+    # Calculate per-type inflation
+    type_stats = {}
+    for ptype, data in by_type.items():
+        if data['count'] > 0 and data['projected'] > 0:
+            type_stats[ptype] = {
+                'inflation_rate': (data['spent'] - data['projected']) / data['projected'],
+                'num_picks': data['count'],
+                'total_spent': data['spent'],
+                'total_projected': data['projected'],
+            }
+
+    # Calculate recent trend (last 10 picks)
+    recent_picks = (
+        session.query(DraftPick)
+        .order_by(DraftPick.pick_number.desc())
+        .limit(10)
+        .all()
+    )
+
+    recent_spent = 0
+    recent_projected = 0
+    for pick in recent_picks:
+        if pick.player:
+            recent_spent += pick.price
+            recent_projected += pick.player.dollar_value or 0
+
+    if recent_projected > 0:
+        recent_trend = (recent_spent - recent_projected) / recent_projected
+    else:
+        recent_trend = 0.0
+
+    return {
+        'inflation_rate': inflation_rate,
+        'total_spent': total_spent,
+        'total_projected_value': total_projected,
+        'num_picks': len(picks),
+        'overpays': overpays,
+        'bargains': bargains,
+        'avg_difference': sum(differences) / len(differences) if differences else 0.0,
+        'by_type': type_stats,
+        'recent_trend': recent_trend,
+    }
