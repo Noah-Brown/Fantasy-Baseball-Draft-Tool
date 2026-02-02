@@ -14,6 +14,7 @@ from src.draft import (
     get_user_team,
     get_remaining_roster_slots,
     get_remaining_budget,
+    get_best_available_by_position,
 )
 from src.settings import LeagueSettings
 
@@ -425,3 +426,61 @@ class TestRemainingCalculations:
 
         # 400 - 30 - 25 = 345
         assert budget == 345
+
+
+class TestGetBestAvailableByPosition:
+    """Tests for get_best_available_by_position."""
+
+    def test_returns_dict_with_all_positions(self, session, populated_db, test_settings):
+        """Test that function returns dict with all scarcity positions."""
+        initialize_draft(session, test_settings, "My Team")
+
+        best_available = get_best_available_by_position(session)
+
+        from src.positions import SCARCITY_POSITIONS
+        for pos in SCARCITY_POSITIONS:
+            assert pos in best_available
+
+    def test_returns_top_n_players(self, session, populated_db, test_settings):
+        """Test that function returns up to top_n players per position."""
+        initialize_draft(session, test_settings, "My Team")
+
+        # With default top_n=5
+        best_available = get_best_available_by_position(session, top_n=5)
+
+        # Check each position has at most 5 players
+        for pos, players in best_available.items():
+            assert len(players) <= 5
+
+    def test_excludes_drafted_players(self, session, populated_db, test_settings):
+        """Test that drafted players are excluded."""
+        initialize_draft(session, test_settings, "My Team")
+        teams = get_all_teams(session)
+
+        # Get best available before draft
+        best_before = get_best_available_by_position(session)
+
+        # Draft the first player (a hitter with position 1B,3B)
+        draft_player(session, populated_db[0].id, teams[0].id, 30)
+
+        # Get best available after draft
+        best_after = get_best_available_by_position(session)
+
+        # The drafted player should not be in any position list
+        drafted_player = populated_db[0]
+        for pos, players in best_after.items():
+            player_ids = [p.id for p in players]
+            assert drafted_player.id not in player_ids
+
+    def test_players_sorted_by_value_descending(self, session, populated_db, test_settings):
+        """Test that players are sorted by dollar value (highest first)."""
+        initialize_draft(session, test_settings, "My Team")
+
+        best_available = get_best_available_by_position(session)
+
+        for pos, players in best_available.items():
+            if len(players) >= 2:
+                for i in range(len(players) - 1):
+                    current_value = players[i].dollar_value or 0
+                    next_value = players[i + 1].dollar_value or 0
+                    assert current_value >= next_value

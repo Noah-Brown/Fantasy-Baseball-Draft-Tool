@@ -32,6 +32,7 @@ from src.draft import (
     get_team_roster_needs,
     calculate_bid_impact,
     get_position_scarcity,
+    get_best_available_by_position,
 )
 from src.targets import (
     add_target,
@@ -577,6 +578,59 @@ def show_draft_room(session):
                     for player in info['top_available']:
                         st.caption(f"  • {player.name} - ${player.dollar_value:.0f}")
         st.divider()
+
+    # Best Available by Position
+    with st.expander("📊 Best Available by Position", expanded=False):
+        best_available = get_best_available_by_position(session, top_n=5)
+
+        # Group positions into categories for cleaner display
+        infield_positions = ["C", "1B", "2B", "3B", "SS", "CI", "MI"]
+        outfield_positions = ["OF"]
+        pitcher_positions = ["SP", "RP"]
+
+        st.markdown("### Infielders")
+        cols = st.columns(4)
+        for idx, pos in enumerate(infield_positions[:4]):
+            with cols[idx]:
+                st.markdown(f"**{pos}**")
+                for player in best_available.get(pos, []):
+                    value_str = f"${player.dollar_value:.0f}" if player.dollar_value else "-"
+                    st.caption(f"{player.name} ({value_str})")
+                if not best_available.get(pos):
+                    st.caption("No players available")
+
+        cols = st.columns(4)
+        for idx, pos in enumerate(infield_positions[4:]):
+            with cols[idx]:
+                st.markdown(f"**{pos}**")
+                for player in best_available.get(pos, []):
+                    value_str = f"${player.dollar_value:.0f}" if player.dollar_value else "-"
+                    st.caption(f"{player.name} ({value_str})")
+                if not best_available.get(pos):
+                    st.caption("No players available")
+
+        st.markdown("### Outfielders")
+        cols = st.columns(4)
+        with cols[0]:
+            st.markdown("**OF**")
+            for player in best_available.get("OF", []):
+                value_str = f"${player.dollar_value:.0f}" if player.dollar_value else "-"
+                st.caption(f"{player.name} ({value_str})")
+            if not best_available.get("OF"):
+                st.caption("No players available")
+
+        st.markdown("### Pitchers")
+        cols = st.columns(4)
+        for idx, pos in enumerate(pitcher_positions):
+            with cols[idx]:
+                st.markdown(f"**{pos}**")
+                for player in best_available.get(pos, []):
+                    value_str = f"${player.dollar_value:.0f}" if player.dollar_value else "-"
+                    st.caption(f"{player.name} ({value_str})")
+                if not best_available.get(pos):
+                    st.caption("No players available")
+
+    st.divider()
 
     # Max Bid Calculator and Recalculate button row
     col1, col2 = st.columns([3, 1])
