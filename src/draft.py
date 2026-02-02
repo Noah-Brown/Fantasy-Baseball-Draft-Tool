@@ -523,3 +523,45 @@ def get_position_scarcity(session: Session, settings: LeagueSettings = None, qua
             }
 
     return scarcity
+
+
+def get_best_available_by_position(session: Session, top_n: int = 5):
+    """
+    Get top N available players at each position, sorted by dollar value.
+
+    Args:
+        session: Database session
+        top_n: Number of top players to return per position (default: 5)
+
+    Returns:
+        Dict mapping position to list of top available players:
+        {
+            'C': [Player, Player, ...],
+            '1B': [Player, Player, ...],
+            ...
+        }
+    """
+    from sqlalchemy import or_
+    from .positions import SCARCITY_POSITIONS, expand_position
+
+    best_available = {}
+
+    for pos in SCARCITY_POSITIONS:
+        base_positions = expand_position(pos)
+
+        if base_positions and pos in ["CI", "MI"]:
+            # Composite: OR logic across constituents
+            position_filters = [Player.positions.contains(bp) for bp in base_positions]
+            query = session.query(Player).filter(
+                Player.is_drafted == False,
+                or_(*position_filters)
+            )
+        else:
+            query = session.query(Player).filter(
+                Player.is_drafted == False,
+                Player.positions.contains(pos)
+            )
+
+        best_available[pos] = query.order_by(Player.dollar_value.desc()).limit(top_n).all()
+
+    return best_available

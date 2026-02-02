@@ -204,7 +204,7 @@ Steamer CSV → Import → Player DB → SGP Calculation → Dollar Values
 
 - [x] 1. Target List / Watchlist
 - [x] 2. Positional Scarcity Indicator
-- [ ] 3. Best Available by Position
+- [x] 3. Best Available by Position
 - [ ] 4. Inflation/Deflation Tracker
 - [x] 5. Category Balance Dashboard
 - [ ] 6. Team Needs Analysis
