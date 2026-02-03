@@ -979,3 +979,43 @@ def analyze_team_category_balance(picks: list, settings: LeagueSettings = None) 
         "pitching_cats": pitching_cats,
         "num_teams": num_teams,
     }
+
+
+def get_category_weak_points(
+    analysis: dict,
+    threshold: int = 7,
+) -> list[dict]:
+    """
+    Identify weak categories from team analysis.
+
+    Args:
+        analysis: Result from analyze_team_category_balance
+        threshold: Standings position at or above which category is "weak"
+
+    Returns:
+        List of dicts with category info:
+            - category: Category name (uppercase)
+            - position: Projected standings position
+            - sgp: Total SGP for this category
+            - type: "hitting" or "pitching"
+    """
+    weak_points = []
+    standings = analysis.get("standings", {})
+    sgp_totals = analysis.get("sgp_totals", {})
+    hitting_cats = analysis.get("hitting_cats", [])
+    pitching_cats = analysis.get("pitching_cats", [])
+
+    for cat, position in standings.items():
+        if position >= threshold:
+            cat_type = "hitting" if cat in hitting_cats else "pitching"
+            weak_points.append({
+                "category": cat.upper(),
+                "position": position,
+                "sgp": sgp_totals.get(cat, 0),
+                "type": cat_type,
+            })
+
+    # Sort by position (worst first)
+    weak_points.sort(key=lambda x: x["position"], reverse=True)
+
+    return weak_points

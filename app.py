@@ -49,6 +49,10 @@ from src.positions import (
     HITTER_ROSTER_POSITIONS,
     expand_position,
 )
+from src.needs import (
+    analyze_team_needs,
+    get_team_positional_roster_state,
+)
 
 # Page configuration
 st.set_page_config(
@@ -1451,6 +1455,204 @@ def show_my_team(session):
                 render_category_balance_dashboard(analysis, settings)
             else:
                 st.info("Draft players to see category balance analysis")
+
+        # Team Needs Analysis
+        st.divider()
+        with st.expander("Team Needs Analysis", expanded=True):
+            settings = get_current_settings()
+            render_team_needs_analysis(session, user_team, settings)
+
+
+def render_positional_roster_grid(positional_states: list) -> None:
+    """
+    Render the positional roster grid showing filled/needed positions.
+
+    Color coding:
+        - Green: Position fully filled
+        - Yellow: Position partially filled
+        - Red: Position empty
+    """
+    # Separate hitters and pitchers
+    hitter_positions = ["C", "1B", "2B", "3B", "SS", "OF", "CI", "MI", "UTIL"]
+    pitcher_positions = ["SP", "RP", "P"]
+
+    hitter_states = [s for s in positional_states if s.position in hitter_positions]
+    pitcher_states = [s for s in positional_states if s.position in pitcher_positions]
+
+    col1, col2 = st.columns(2)
+
+    with col1:
+        st.markdown("**Hitter Positions**")
+        if hitter_states:
+            for state in hitter_states:
+                if state.required == 0:
+                    continue
+
+                # Determine color based on fill status
+                if state.remaining == 0:
+                    color = "#90EE90"  # Green - filled
+                    icon = ""
+                elif state.filled > 0:
+                    color = "#FFFFE0"  # Yellow - partial
+                    icon = ""
+                else:
+                    color = "#FFB6C1"  # Red - empty
+                    icon = ""
+
+                # Build display
+                players_str = ", ".join(state.players) if state.players else "Empty"
+                st.markdown(
+                    f'<div style="background-color: {color}; padding: 8px; margin: 4px 0; border-radius: 4px;">'
+                    f'<strong>{state.position}</strong>: {state.filled}/{state.required} '
+                    f'<span style="color: #666;">({players_str})</span></div>',
+                    unsafe_allow_html=True,
+                )
+        else:
+            st.info("No hitter positions configured")
+
+    with col2:
+        st.markdown("**Pitcher Positions**")
+        if pitcher_states:
+            for state in pitcher_states:
+                if state.required == 0:
+                    continue
+
+                # Determine color based on fill status
+                if state.remaining == 0:
+                    color = "#90EE90"  # Green - filled
+                elif state.filled > 0:
+                    color = "#FFFFE0"  # Yellow - partial
+                else:
+                    color = "#FFB6C1"  # Red - empty
+
+                # Build display
+                players_str = ", ".join(state.players) if state.players else "Empty"
+                st.markdown(
+                    f'<div style="background-color: {color}; padding: 8px; margin: 4px 0; border-radius: 4px;">'
+                    f'<strong>{state.position}</strong>: {state.filled}/{state.required} '
+                    f'<span style="color: #666;">({players_str})</span></div>',
+                    unsafe_allow_html=True,
+                )
+        else:
+            st.info("No pitcher positions configured")
+
+
+def render_recommendations_table(recommendations: list, session) -> None:
+    """Render the smart recommendations table."""
+    if not recommendations:
+        st.info("No recommendations available. All positions may be filled.")
+        return
+
+    rows = []
+    for rec in recommendations:
+        player = rec.player
+        rows.append({
+            "Player": player.name,
+            "Pos": player.positions or "",
+            "Value": f"${player.dollar_value:.0f}" if player.dollar_value else "-",
+            "Fills": ", ".join(rec.fills_positions),
+            "Helps": ", ".join(rec.helps_categories) if rec.helps_categories else "-",
+            "Score": f"{rec.composite_score:.2f}",
+        })
+
+    df = pd.DataFrame(rows)
+
+    st.dataframe(
+        df,
+        width='stretch',
+        hide_index=True,
+    )
+
+    st.caption("Score combines position urgency (35%), category fit (35%), and player value (30%)")
+
+
+def render_comparative_standings(comparative_standings: dict, user_team_name: str, settings) -> None:
+    """
+    Render comparative standings heatmap across all teams.
+
+    Color scale:
+        - Green (1-4): Strong
+        - Yellow (5-8): Average
+        - Red (9-12): Weak
+    """
+    if not comparative_standings:
+        st.info("No teams to compare yet.")
+        return
+
+    hitting_cats = [c.lower() for c in settings.hitting_categories]
+    pitching_cats = [c.lower() for c in settings.pitching_categories]
+    all_cats = hitting_cats + pitching_cats
+
+    # Build dataframe
+    rows = []
+    for team_name, standings in comparative_standings.items():
+        row = {"Team": team_name}
+        for cat in all_cats:
+            row[cat.upper()] = standings.get(cat, "-")
+        rows.append(row)
+
+    df = pd.DataFrame(rows)
+
+    # Style function for standings
+    def style_standing(val):
+        if pd.isna(val) or val == "-":
+            return ''
+        try:
+            pos = int(val)
+            if pos <= 4:
+                return 'background-color: #90EE90'  # Green
+            elif pos <= 8:
+                return 'background-color: #FFFFE0'  # Yellow
+            else:
+                return 'background-color: #FFB6C1'  # Red
+        except (ValueError, TypeError):
+            return ''
+
+    # Highlight user's team row
+    def highlight_user_team(row):
+        if user_team_name in str(row.get("Team", "")):
+            return ['font-weight: bold; border: 2px solid #1E88E5'] * len(row)
+        return [''] * len(row)
+
+    cat_cols = [c.upper() for c in all_cats]
+    styled_df = df.style.applymap(style_standing, subset=[c for c in cat_cols if c in df.columns])
+    styled_df = styled_df.apply(highlight_user_team, axis=1)
+
+    st.dataframe(
+        styled_df,
+        width='stretch',
+        hide_index=True,
+    )
+
+    st.caption("Rankings: 1 = best, higher = worse. Your team is highlighted.")
+
+
+def render_team_needs_analysis(session, team, settings) -> None:
+    """Render the complete Team Needs Analysis section."""
+    # Perform analysis
+    needs_analysis = analyze_team_needs(session, team, settings)
+
+    # Positional Roster Grid
+    st.markdown("### Positional Roster Status")
+    render_positional_roster_grid(needs_analysis.positional_states)
+
+    st.divider()
+
+    # Smart Recommendations
+    st.markdown("### Smart Recommendations")
+    st.caption("Players that best address your positional needs and weak categories")
+    render_recommendations_table(needs_analysis.recommendations, session)
+
+    st.divider()
+
+    # Comparative Standings
+    st.markdown("### League Standings Comparison")
+    st.caption("Projected standings by category across all teams")
+    render_comparative_standings(
+        needs_analysis.comparative_standings,
+        team.name,
+        settings,
+    )
 
 
 def show_all_teams(session):

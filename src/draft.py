@@ -568,3 +568,60 @@ def get_position_scarcity(session: Session, settings: LeagueSettings = None, qua
             }
 
     return scarcity
+
+
+def get_team_positional_breakdown(
+    session: Session,
+    team: Team,
+    settings: LeagueSettings = None
+) -> dict:
+    """
+    Get a team's drafted players organized by their assigned position slots.
+
+    Uses the greedy assignment from needs module to show which players
+    are filling which roster slots.
+
+    Args:
+        session: Database session
+        team: The team to analyze
+        settings: League settings
+
+    Returns:
+        Dict with:
+            - hitters: Dict mapping position -> list of player names
+            - pitchers: Dict mapping position -> list of player names
+            - unassigned: List of players who couldn't be assigned
+    """
+    from .needs import get_team_positional_roster_state
+
+    if settings is None:
+        settings = DEFAULT_SETTINGS
+
+    roster_states = get_team_positional_roster_state(session, team, settings)
+
+    hitters = {}
+    pitchers = {}
+
+    hitter_positions = ["C", "1B", "2B", "3B", "SS", "OF", "CI", "MI", "UTIL"]
+    pitcher_positions = ["SP", "RP", "P"]
+
+    for state in roster_states:
+        if state.position in hitter_positions:
+            hitters[state.position] = {
+                "players": state.players,
+                "filled": state.filled,
+                "required": state.required,
+                "remaining": state.remaining,
+            }
+        elif state.position in pitcher_positions:
+            pitchers[state.position] = {
+                "players": state.players,
+                "filled": state.filled,
+                "required": state.required,
+                "remaining": state.remaining,
+            }
+
+    return {
+        "hitters": hitters,
+        "pitchers": pitchers,
+    }
