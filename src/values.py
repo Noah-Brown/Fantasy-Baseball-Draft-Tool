@@ -707,6 +707,93 @@ def get_available_pitchers(session: Session) -> list[Player]:
     )
 
 
+def get_player_ranks(session: Session, player_type: str = None) -> dict[int, int]:
+    """
+    Get player rankings by SGP among available (undrafted) players.
+
+    For snake drafts, this provides the rank-based value display instead of
+    dollar values. Ranks are 1-based (1 = best player).
+
+    Args:
+        session: Database session
+        player_type: "hitter", "pitcher", or None for all players
+
+    Returns:
+        Dict mapping player_id to rank (1-based)
+    """
+    query = session.query(Player).filter(Player.is_drafted == False)
+
+    if player_type == "hitter":
+        query = query.filter(Player.player_type == "hitter")
+    elif player_type == "pitcher":
+        query = query.filter(Player.player_type == "pitcher")
+
+    # Order by SGP descending (highest SGP = rank 1)
+    players = query.order_by(Player.sgp.desc().nullslast()).all()
+
+    ranks = {}
+    for rank, player in enumerate(players, start=1):
+        ranks[player.id] = rank
+
+    return ranks
+
+
+def get_positional_ranks(session: Session, position: str) -> dict[int, int]:
+    """
+    Get player rankings by SGP among available players at a specific position.
+
+    Args:
+        session: Database session
+        position: Position code (e.g., "C", "SS", "SP")
+
+    Returns:
+        Dict mapping player_id to positional rank (1-based)
+    """
+    from sqlalchemy import or_
+    from .positions import expand_position
+
+    # Expand composite positions (CI -> 1B, 3B; MI -> 2B, SS)
+    expanded = expand_position(position)
+    if expanded:
+        # Composite position: match any constituent
+        position_filters = [Player.positions.contains(p) for p in expanded]
+        query = session.query(Player).filter(
+            Player.is_drafted == False,
+            or_(*position_filters)
+        )
+    else:
+        # Direct position match
+        query = session.query(Player).filter(
+            Player.is_drafted == False,
+            Player.positions.contains(position)
+        )
+
+    # Order by SGP descending
+    players = query.order_by(Player.sgp.desc().nullslast()).all()
+
+    ranks = {}
+    for rank, player in enumerate(players, start=1):
+        ranks[player.id] = rank
+
+    return ranks
+
+
+def get_player_rank(session: Session, player_id: int, player_type: str = None) -> int | None:
+    """
+    Get a single player's rank among available players.
+
+    Args:
+        session: Database session
+        player_id: ID of the player to rank
+        player_type: "hitter", "pitcher", or None for overall rank
+
+    Returns:
+        Player's rank (1-based), or None if player is drafted or not found
+    """
+    ranks = get_player_ranks(session, player_type)
+    return ranks.get(player_id)
+
+
 def get_player_value_breakdown(
     player: Player,
     settings: LeagueSettings = None,

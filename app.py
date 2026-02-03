@@ -28,11 +28,19 @@ from src.draft import (
     get_draft_state,
     get_all_teams,
     get_user_team,
+    get_on_the_clock_team,
     calculate_max_bid,
     get_team_roster_needs,
     calculate_bid_impact,
     get_position_scarcity,
 )
+from src.snake import (
+    get_current_drafter,
+    get_pick_position,
+    get_team_next_pick,
+    format_pick_display,
+)
+from src.values import get_player_ranks
 from src.targets import (
     add_target,
     remove_target,
@@ -161,11 +169,19 @@ def get_current_settings() -> LeagueSettings:
             "min_bid": DEFAULT_SETTINGS.min_bid,
             "roster_spots": dict(DEFAULT_SETTINGS.roster_spots),
             "use_positional_adjustments": DEFAULT_SETTINGS.use_positional_adjustments,
+            "draft_type": DEFAULT_SETTINGS.draft_type,
+            "rounds_per_team": DEFAULT_SETTINGS.rounds_per_team,
         }
 
     # Ensure use_positional_adjustments exists (for existing sessions)
     if "use_positional_adjustments" not in st.session_state.league_settings:
         st.session_state.league_settings["use_positional_adjustments"] = DEFAULT_SETTINGS.use_positional_adjustments
+
+    # Ensure draft_type and rounds_per_team exist (for existing sessions)
+    if "draft_type" not in st.session_state.league_settings:
+        st.session_state.league_settings["draft_type"] = DEFAULT_SETTINGS.draft_type
+    if "rounds_per_team" not in st.session_state.league_settings:
+        st.session_state.league_settings["rounds_per_team"] = DEFAULT_SETTINGS.rounds_per_team
 
     # Build LeagueSettings from session state
     state = st.session_state.league_settings
@@ -175,6 +191,8 @@ def get_current_settings() -> LeagueSettings:
         min_bid=state["min_bid"],
         roster_spots=state["roster_spots"],
         use_positional_adjustments=state.get("use_positional_adjustments", True),
+        draft_type=state.get("draft_type", "auction"),
+        rounds_per_team=state.get("rounds_per_team", 23),
     )
 
 
@@ -392,10 +410,11 @@ def show_player_database(session):
 
 
 def show_draft_room(session):
-    """Draft Room page for conducting the auction draft."""
+    """Draft Room page for conducting the auction or snake draft."""
     st.header("Draft Room")
 
     draft_state = get_draft_state(session)
+    settings = get_current_settings()
 
     # Sidebar controls
     with st.sidebar:
@@ -411,131 +430,230 @@ def show_draft_room(session):
                 key="user_team_name",
             )
 
+            # Show draft type from settings
+            st.caption(f"Draft Type: **{settings.draft_type.title()}**")
+            if settings.draft_type == "snake":
+                st.caption(f"Rounds: {settings.rounds_per_team}")
+
             if st.button("Start Draft", type="primary"):
                 # Check if players exist
                 player_count = session.query(Player).count()
                 if player_count == 0:
                     st.error("Import players first before starting draft!")
                 else:
-                    initialize_draft(session, get_current_settings(), team_name)
+                    initialize_draft(session, settings, team_name)
                     st.success("Draft initialized!")
                     st.rerun()
         else:
             # Draft is active - show draft controls
-            st.subheader("Draft Player")
-
-            # Team selector with remaining budget
+            is_snake = draft_state.draft_type == "snake"
             teams = get_all_teams(session)
-            team_options = {
-                f"{t.name} (${t.remaining_budget})": t.id
-                for t in teams
-            }
-
-            # Default to user team
             user_team = get_user_team(session)
-            default_idx = 0
-            if user_team:
-                for idx, label in enumerate(team_options.keys()):
-                    if user_team.name in label:
-                        default_idx = idx
-                        break
 
-            selected_team_label = st.selectbox(
-                "Team",
-                options=list(team_options.keys()),
-                index=default_idx,
-                key="draft_team",
-            )
-            selected_team_id = team_options[selected_team_label]
+            if is_snake:
+                # Snake draft controls
+                st.subheader("Snake Draft")
 
-            # Player search/selector
-            available_players = get_available_players(session)
-            # Sort by dollar value (descending)
-            available_players.sort(
-                key=lambda p: p.dollar_value if p.dollar_value else 0,
-                reverse=True
-            )
+                # Show current pick info
+                round_num, pick_in_round = get_pick_position(draft_state)
+                num_teams = len(draft_state.draft_order) if draft_state.draft_order else settings.num_teams
+                pick_display = format_pick_display(round_num, pick_in_round, num_teams)
+                st.markdown(f"**{pick_display}**")
 
-            if available_players:
-                player_options = {
-                    f"{p.name} (${p.dollar_value:.0f})" if p.dollar_value else p.name: p.id
-                    for p in available_players
+                # Show who's on the clock
+                on_clock_team = get_on_the_clock_team(session)
+                if on_clock_team:
+                    if on_clock_team.is_user_team:
+                        st.success(f"🎯 **YOU'RE ON THE CLOCK!**")
+                    else:
+                        st.info(f"On the clock: **{on_clock_team.name}**")
+
+                st.divider()
+                st.subheader("Make Pick")
+
+                # In snake, automatically select the on-clock team
+                if on_clock_team:
+                    selected_team_id = on_clock_team.id
+                    st.caption(f"Picking for: **{on_clock_team.name}**")
+                else:
+                    selected_team_id = None
+                    st.warning("Draft may be complete")
+
+                # Player search/selector - sorted by SGP for snake
+                available_players = get_available_players(session)
+                available_players.sort(
+                    key=lambda p: p.sgp if p.sgp else 0,
+                    reverse=True
+                )
+
+                if available_players and selected_team_id:
+                    # Get ranks for display
+                    player_ranks = get_player_ranks(session)
+
+                    player_options = {
+                        f"#{player_ranks.get(p.id, '?')} {p.name} ({p.positions})": p.id
+                        for p in available_players
+                    }
+
+                    selected_player_label = st.selectbox(
+                        "Player",
+                        options=list(player_options.keys()),
+                        key="draft_player",
+                    )
+                    selected_player_id = player_options[selected_player_label]
+                    selected_player = session.get(Player, selected_player_id)
+
+                    if st.button("DRAFT", type="primary", use_container_width=True):
+                        try:
+                            draft_player(session, selected_player_id, selected_team_id, settings=settings)
+                            st.success(f"Drafted {selected_player.name}!")
+                            st.rerun()
+                        except ValueError as e:
+                            st.error(str(e))
+                elif not available_players:
+                    st.info("No available players")
+
+                # Draft progress
+                st.divider()
+                st.subheader("Draft Progress")
+
+                total_picks = settings.rounds_per_team * num_teams
+                picks_made = draft_state.current_pick
+                progress = picks_made / total_picks if total_picks > 0 else 0
+
+                st.progress(progress, text=f"Pick {picks_made + 1} of {total_picks}")
+                st.caption(f"Round {round_num} of {settings.rounds_per_team}")
+
+                # Show teams and their next pick
+                st.divider()
+                st.subheader("Pick Order")
+                for team in teams:
+                    picks_away = get_team_next_pick(draft_state, team.id)
+                    label = team.name
+                    if team.is_user_team:
+                        label += " ⭐"
+
+                    if picks_away == 0:
+                        st.markdown(f"**{label}** - 🎯 NOW")
+                    elif picks_away is not None:
+                        st.caption(f"{label} - {picks_away} picks away")
+                    else:
+                        st.caption(f"{label}")
+
+            else:
+                # Auction draft controls (existing code)
+                st.subheader("Draft Player")
+
+                # Team selector with remaining budget
+                team_options = {
+                    f"{t.name} (${t.remaining_budget})": t.id
+                    for t in teams
                 }
 
-                selected_player_label = st.selectbox(
-                    "Player",
-                    options=list(player_options.keys()),
-                    key="draft_player",
+                # Default to user team
+                default_idx = 0
+                if user_team:
+                    for idx, label in enumerate(team_options.keys()):
+                        if user_team.name in label:
+                            default_idx = idx
+                            break
+
+                selected_team_label = st.selectbox(
+                    "Team",
+                    options=list(team_options.keys()),
+                    index=default_idx,
+                    key="draft_team",
                 )
-                selected_player_id = player_options[selected_player_label]
+                selected_team_id = team_options[selected_team_label]
 
-                # Get selected player for default price
-                selected_player = session.get(Player, selected_player_id)
-                default_price = int(selected_player.dollar_value) if selected_player.dollar_value else 1
-
-                price = st.number_input(
-                    "Price ($)",
-                    min_value=1,
-                    max_value=999,
-                    value=default_price,
-                    key="draft_price",
+                # Player search/selector
+                available_players = get_available_players(session)
+                # Sort by dollar value (descending)
+                available_players.sort(
+                    key=lambda p: p.dollar_value if p.dollar_value else 0,
+                    reverse=True
                 )
 
-                # Max bid calculator for selected team
-                selected_team = session.get(Team, selected_team_id)
-                if selected_team:
-                    max_bid_info = calculate_max_bid(session, selected_team, get_current_settings())
+                if available_players:
+                    player_options = {
+                        f"{p.name} (${p.dollar_value:.0f})" if p.dollar_value else p.name: p.id
+                        for p in available_players
+                    }
 
-                    # Show max affordable bid
-                    st.caption(f"💰 Max affordable bid: **${max_bid_info['max_bid']}**")
+                    selected_player_label = st.selectbox(
+                        "Player",
+                        options=list(player_options.keys()),
+                        key="draft_player",
+                    )
+                    selected_player_id = player_options[selected_player_label]
 
-                    # Show warning if price exceeds max bid
-                    if price > max_bid_info['max_bid']:
-                        st.warning(f"⚠️ Over max by ${price - max_bid_info['max_bid']}!")
-                    elif price == max_bid_info['max_bid']:
-                        st.info("This is your max affordable bid")
+                    # Get selected player for default price
+                    selected_player = session.get(Player, selected_player_id)
+                    default_price = int(selected_player.dollar_value) if selected_player.dollar_value else 1
 
-                    # Show roster needs
-                    if max_bid_info['spots_needed'] > 0:
-                        st.caption(
-                            f"Roster: {max_bid_info['hitters_needed']}H + "
-                            f"{max_bid_info['pitchers_needed']}P needed"
-                        )
+                    price = st.number_input(
+                        "Price ($)",
+                        min_value=1,
+                        max_value=999,
+                        value=default_price,
+                        key="draft_price",
+                    )
 
-                if st.button("DRAFT", type="primary", width='stretch'):
-                    try:
-                        draft_player(session, selected_player_id, selected_team_id, price, get_current_settings())
-                        st.success(f"Drafted {selected_player.name} for ${price}!")
-                        st.rerun()
-                    except ValueError as e:
-                        st.error(str(e))
-            else:
-                st.info("No available players")
+                    # Max bid calculator for selected team
+                    selected_team = session.get(Team, selected_team_id)
+                    if selected_team:
+                        max_bid_info = calculate_max_bid(session, selected_team, settings)
 
-            # Team budgets summary with max bids
-            st.divider()
-            st.subheader("Team Budgets")
+                        # Show max affordable bid
+                        st.caption(f"💰 Max affordable bid: **${max_bid_info['max_bid']}**")
 
-            for team in teams:
-                max_info = calculate_max_bid(session, team, get_current_settings())
-                roster_info = get_team_roster_needs(session, team, get_current_settings())
+                        # Show warning if price exceeds max bid
+                        if price > max_bid_info['max_bid']:
+                            st.warning(f"⚠️ Over max by ${price - max_bid_info['max_bid']}!")
+                        elif price == max_bid_info['max_bid']:
+                            st.info("This is your max affordable bid")
 
-                label = team.name
-                if team.is_user_team:
-                    label += " ⭐"
+                        # Show roster needs
+                        if max_bid_info['spots_needed'] > 0:
+                            st.caption(
+                                f"Roster: {max_bid_info['hitters_needed']}H + "
+                                f"{max_bid_info['pitchers_needed']}P needed"
+                            )
 
-                with st.container():
-                    st.markdown(f"**{label}**")
-                    col1, col2, col3 = st.columns(3)
-                    with col1:
-                        st.caption(f"${team.remaining_budget}")
-                    with col2:
-                        st.caption(f"Max: ${max_info['max_bid']}")
-                    with col3:
-                        spots = roster_info['total_needed']
-                        st.caption(f"{spots} left")
+                    if st.button("DRAFT", type="primary", use_container_width=True):
+                        try:
+                            draft_player(session, selected_player_id, selected_team_id, price, settings)
+                            st.success(f"Drafted {selected_player.name} for ${price}!")
+                            st.rerun()
+                        except ValueError as e:
+                            st.error(str(e))
+                else:
+                    st.info("No available players")
 
-            # Reset draft button
+                # Team budgets summary with max bids
+                st.divider()
+                st.subheader("Team Budgets")
+
+                for team in teams:
+                    max_info = calculate_max_bid(session, team, settings)
+                    roster_info = get_team_roster_needs(session, team, settings)
+
+                    label = team.name
+                    if team.is_user_team:
+                        label += " ⭐"
+
+                    with st.container():
+                        st.markdown(f"**{label}**")
+                        col1, col2, col3 = st.columns(3)
+                        with col1:
+                            st.caption(f"${team.remaining_budget}")
+                        with col2:
+                            st.caption(f"Max: ${max_info['max_bid']}")
+                        with col3:
+                            spots = roster_info['total_needed']
+                            st.caption(f"{spots} left")
+
+            # Reset draft button (common to both types)
             st.divider()
             if st.button("Reset Draft", type="secondary"):
                 reset_draft(session)
@@ -547,9 +665,11 @@ def show_draft_room(session):
         st.info("Set your team name in the sidebar and click 'Start Draft' to begin.")
         return
 
-    # Target alerts - show bargains at the top
+    is_snake = draft_state.draft_type == "snake"
+
+    # Target alerts - show bargains at the top (auction only shows price-based alerts)
     bargains = get_available_targets_below_value(session)
-    if bargains:
+    if bargains and not is_snake:
         with st.container():
             st.success(f"🎯 **{len(bargains)} TARGET ALERT{'S' if len(bargains) > 1 else ''}** - Players available at or below your max bid!")
             cols = st.columns(min(len(bargains), 4))
@@ -563,7 +683,7 @@ def show_draft_room(session):
         st.divider()
 
     # Positional scarcity warnings
-    scarcity = get_position_scarcity(session, get_current_settings())
+    scarcity = get_position_scarcity(session, settings)
     if scarcity:
         critical = {p: s for p, s in scarcity.items() if s['level'] == 'critical'}
         medium = {p: s for p, s in scarcity.items() if s['level'] == 'medium'}
@@ -585,64 +705,77 @@ def show_draft_room(session):
                 for pos, info in scarcity.items():
                     st.markdown(f"**{pos}** ({info['count']} quality remaining)")
                     for player in info['top_available']:
-                        st.caption(f"  • {player.name} - ${player.dollar_value:.0f}")
+                        if is_snake:
+                            st.caption(f"  • {player.name} (SGP: {player.sgp:.1f})")
+                        else:
+                            st.caption(f"  • {player.name} - ${player.dollar_value:.0f}")
         st.divider()
 
-    # Max Bid Calculator and Recalculate button row
-    col1, col2 = st.columns([3, 1])
+    # Max Bid Calculator and Recalculate button row (auction only)
+    if not is_snake:
+        col1, col2 = st.columns([3, 1])
 
-    with col1:
-        # Expandable max bid calculator
-        with st.expander("💰 Max Bid Calculator", expanded=False):
-            user_team = get_user_team(session)
-            if user_team:
-                max_info = calculate_max_bid(session, user_team, get_current_settings())
-                roster_info = get_team_roster_needs(session, user_team, get_current_settings())
+        with col1:
+            # Expandable max bid calculator
+            with st.expander("💰 Max Bid Calculator", expanded=False):
+                user_team = get_user_team(session)
+                if user_team:
+                    max_info = calculate_max_bid(session, user_team, settings)
+                    roster_info = get_team_roster_needs(session, user_team, settings)
 
-                # Summary metrics
-                mcol1, mcol2, mcol3, mcol4 = st.columns(4)
-                mcol1.metric("Max Bid", f"${max_info['max_bid']}")
-                mcol2.metric("Budget Left", f"${max_info['remaining_budget']}")
-                mcol3.metric("Spots Needed", max_info['spots_needed'])
-                mcol4.metric("Reserved", f"${max_info['reserved_for_roster']}")
+                    # Summary metrics
+                    mcol1, mcol2, mcol3, mcol4 = st.columns(4)
+                    mcol1.metric("Max Bid", f"${max_info['max_bid']}")
+                    mcol2.metric("Budget Left", f"${max_info['remaining_budget']}")
+                    mcol3.metric("Spots Needed", max_info['spots_needed'])
+                    mcol4.metric("Reserved", f"${max_info['reserved_for_roster']}")
 
-                st.caption(
-                    f"Roster needs: {max_info['hitters_needed']} hitters, "
-                    f"{max_info['pitchers_needed']} pitchers"
-                )
+                    st.caption(
+                        f"Roster needs: {max_info['hitters_needed']} hitters, "
+                        f"{max_info['pitchers_needed']} pitchers"
+                    )
 
-                st.divider()
+                    st.divider()
 
-                # Bid impact calculator
-                st.markdown("**What-If Calculator**")
-                test_bid = st.number_input(
-                    "Test bid amount",
-                    min_value=1,
-                    max_value=max_info['remaining_budget'],
-                    value=min(max_info['max_bid'], max_info['remaining_budget']),
-                    key="test_bid_amount",
-                )
+                    # Bid impact calculator
+                    st.markdown("**What-If Calculator**")
+                    test_bid = st.number_input(
+                        "Test bid amount",
+                        min_value=1,
+                        max_value=max_info['remaining_budget'],
+                        value=min(max_info['max_bid'], max_info['remaining_budget']),
+                        key="test_bid_amount",
+                    )
 
-                impact = calculate_bid_impact(session, user_team, test_bid, get_current_settings())
+                    impact = calculate_bid_impact(session, user_team, test_bid, settings)
 
-                if impact['is_affordable']:
-                    st.success(f"✅ ${test_bid} is affordable")
-                else:
-                    st.error(f"❌ ${test_bid} exceeds max by ${impact['over_max_by']}")
+                    if impact['is_affordable']:
+                        st.success(f"✅ ${test_bid} is affordable")
+                    else:
+                        st.error(f"❌ ${test_bid} exceeds max by ${impact['over_max_by']}")
 
-                icol1, icol2, icol3 = st.columns(3)
-                icol1.metric("Budget After", f"${impact['remaining_after']}")
-                icol2.metric("Spots After", impact['spots_after'])
-                icol3.metric("Avg/Player After", f"${impact['avg_per_player_after']}")
+                    icol1, icol2, icol3 = st.columns(3)
+                    icol1.metric("Budget After", f"${impact['remaining_after']}")
+                    icol2.metric("Spots After", impact['spots_after'])
+                    icol3.metric("Avg/Player After", f"${impact['avg_per_player_after']}")
 
-                if impact['spots_after'] > 0:
-                    st.caption(f"Max bid for next player: ${impact['max_bid_after']}")
+                    if impact['spots_after'] > 0:
+                        st.caption(f"Max bid for next player: ${impact['max_bid_after']}")
 
-    with col2:
-        if st.button("Recalculate Values", type="secondary"):
+        with col2:
+            if st.button("Recalculate Values", type="secondary"):
+                try:
+                    count = calculate_remaining_player_values(session, settings)
+                    st.success(f"Recalculated values for {count} available players!")
+                    st.rerun()
+                except Exception as e:
+                    st.error(f"Error: {e}")
+    else:
+        # Snake draft - just show recalculate button
+        if st.button("Recalculate Rankings", type="secondary"):
             try:
-                count = calculate_remaining_player_values(session, get_current_settings())
-                st.success(f"Recalculated values for {count} available players!")
+                count = calculate_remaining_player_values(session, settings)
+                st.success(f"Recalculated rankings for {count} available players!")
                 st.rerun()
             except Exception as e:
                 st.error(f"Error: {e}")
@@ -719,6 +852,10 @@ def show_draft_room(session):
     target_ids = get_target_player_ids(session)
     target_info = {t.player_id: t for t in get_targets(session, include_drafted=False)}
 
+    # Get player ranks for snake draft
+    if is_snake:
+        player_ranks = get_player_ranks(session)
+
     if available:
         rows = []
         target_rows = []  # Track which rows are targets for styling
@@ -730,7 +867,9 @@ def show_draft_room(session):
             # Build target indicator
             if is_target and target:
                 value = p.dollar_value or 0
-                if value <= target.max_bid:
+                if is_snake:
+                    target_display = "⭐"  # Just show star for snake drafts
+                elif value <= target.max_bid:
                     target_display = f"🎯 ${target.max_bid}"  # Bargain - at/below max
                 else:
                     target_display = f"⭐ ${target.max_bid}"  # Target but above max
@@ -743,8 +882,15 @@ def show_draft_room(session):
                 "Team": p.team or "",
                 "Type": p.player_type.title() if p.player_type else "",
                 "Pos": p.positions or "",
-                "Value": f"${p.dollar_value:.0f}" if p.dollar_value else "-",
             }
+
+            # Show Rank for snake, Value for auction
+            if is_snake:
+                rank = player_ranks.get(p.id, "-")
+                row["Rank"] = rank
+                row["SGP"] = f"{p.sgp:.1f}" if p.sgp else "-"
+            else:
+                row["Value"] = f"${p.dollar_value:.0f}" if p.dollar_value else "-"
 
             # Add raw stats columns if toggle is enabled and not viewing "All"
             if show_raw_stats and player_type != "All":
@@ -773,6 +919,10 @@ def show_draft_room(session):
             rows.append(row)
             if is_target:
                 target_rows.append(idx)
+
+        # For snake drafts, sort by rank
+        if is_snake:
+            query = query.order_by(Player.sgp.desc())
 
         df = pd.DataFrame(rows)
 
@@ -808,9 +958,15 @@ def show_draft_room(session):
         )
 
         # Legend
-        st.caption(f"Showing top {len(available)} available players by value")
+        if is_snake:
+            st.caption(f"Showing top {len(available)} available players by rank")
+        else:
+            st.caption(f"Showing top {len(available)} available players by value")
         if target_ids:
-            st.caption("🎯 = Target at/below max bid (bargain!) | ⭐ = Target above max bid")
+            if is_snake:
+                st.caption("⭐ = Target player")
+            else:
+                st.caption("🎯 = Target at/below max bid (bargain!) | ⭐ = Target above max bid")
 
         # Export available players
         csv = df.to_csv(index=False)
@@ -840,11 +996,14 @@ def show_draft_room(session):
                 st.text(pick['player_name'])
 
             with col3:
-                st.text(f"{pick['team_name']} - ${pick['price']}")
+                if is_snake:
+                    st.text(f"{pick['team_name']}")
+                else:
+                    st.text(f"{pick['team_name']} - ${pick['price']}")
 
             with col4:
                 if st.button("Undo", key=f"undo_{pick['pick_id']}"):
-                    player = undo_pick(session, pick['pick_id'], get_current_settings())
+                    player = undo_pick(session, pick['pick_id'], settings)
                     if player:
                         st.success(f"Undid pick: {player.name}")
                     st.rerun()
@@ -858,16 +1017,26 @@ def show_draft_room(session):
         for pick in full_history:
             player = session.get(Player, pick['player_id']) if pick['player_id'] else None
             value = player.dollar_value if player and player.dollar_value else 0
-            surplus = value - pick['price']
-            history_rows.append({
-                "Pick #": pick['pick_number'],
-                "Player": pick['player_name'],
-                "Team": pick['team_name'],
-                "Pos": player.positions if player else "",
-                "Price": pick['price'],
-                "Value": round(value, 0),
-                "Surplus": round(surplus, 0),
-            })
+
+            if is_snake:
+                history_rows.append({
+                    "Pick #": pick['pick_number'],
+                    "Player": pick['player_name'],
+                    "Team": pick['team_name'],
+                    "Pos": player.positions if player else "",
+                    "SGP": round(player.sgp, 1) if player and player.sgp else 0,
+                })
+            else:
+                surplus = value - pick['price']
+                history_rows.append({
+                    "Pick #": pick['pick_number'],
+                    "Player": pick['player_name'],
+                    "Team": pick['team_name'],
+                    "Pos": player.positions if player else "",
+                    "Price": pick['price'],
+                    "Value": round(value, 0),
+                    "Surplus": round(surplus, 0),
+                })
 
         if history_rows:
             history_df = pd.DataFrame(history_rows)
@@ -1915,6 +2084,25 @@ def show_settings_page(session):
     col1, col2 = st.columns(2)
 
     with col1:
+        st.subheader("Draft Format")
+
+        # Draft type selector
+        draft_type_options = ["auction", "snake"]
+        current_draft_type = st.session_state.league_settings.get("draft_type", "auction")
+        draft_type_index = draft_type_options.index(current_draft_type) if current_draft_type in draft_type_options else 0
+
+        draft_type = st.radio(
+            "Draft Type",
+            options=draft_type_options,
+            index=draft_type_index,
+            format_func=lambda x: x.title(),
+            key="settings_draft_type",
+            horizontal=True,
+        )
+        st.session_state.league_settings["draft_type"] = draft_type
+
+        st.divider()
+
         st.subheader("League Structure")
         num_teams = st.number_input(
             "Number of Teams",
@@ -1923,25 +2111,39 @@ def show_settings_page(session):
             value=st.session_state.league_settings["num_teams"],
             key="settings_num_teams",
         )
-        budget = st.number_input(
-            "Budget per Team ($)",
-            min_value=100,
-            max_value=500,
-            value=st.session_state.league_settings["budget_per_team"],
-            key="settings_budget",
-        )
-        min_bid = st.number_input(
-            "Minimum Bid ($)",
-            min_value=1,
-            max_value=5,
-            value=st.session_state.league_settings["min_bid"],
-            key="settings_min_bid",
-        )
-
-        # Update session state when values change
         st.session_state.league_settings["num_teams"] = num_teams
-        st.session_state.league_settings["budget_per_team"] = budget
-        st.session_state.league_settings["min_bid"] = min_bid
+
+        # Conditionally show auction or snake settings
+        if draft_type == "auction":
+            budget = st.number_input(
+                "Budget per Team ($)",
+                min_value=100,
+                max_value=500,
+                value=st.session_state.league_settings["budget_per_team"],
+                key="settings_budget",
+            )
+            min_bid = st.number_input(
+                "Minimum Bid ($)",
+                min_value=1,
+                max_value=5,
+                value=st.session_state.league_settings["min_bid"],
+                key="settings_min_bid",
+            )
+            st.session_state.league_settings["budget_per_team"] = budget
+            st.session_state.league_settings["min_bid"] = min_bid
+        else:
+            # Snake draft settings
+            rounds = st.number_input(
+                "Rounds per Team",
+                min_value=10,
+                max_value=30,
+                value=st.session_state.league_settings.get("rounds_per_team", 23),
+                key="settings_rounds",
+                help="Total roster size - each team picks this many players",
+            )
+            st.session_state.league_settings["rounds_per_team"] = rounds
+
+            st.info("In snake drafts, teams pick in serpentine order (1→12, 12→1, etc.) with no bidding.")
 
     with col2:
         st.subheader("Scoring Categories")
@@ -2026,6 +2228,8 @@ def show_settings_page(session):
             "min_bid": DEFAULT_SETTINGS.min_bid,
             "roster_spots": dict(DEFAULT_SETTINGS.roster_spots),
             "use_positional_adjustments": DEFAULT_SETTINGS.use_positional_adjustments,
+            "draft_type": DEFAULT_SETTINGS.draft_type,
+            "rounds_per_team": DEFAULT_SETTINGS.rounds_per_team,
         }
         st.rerun()
 
@@ -2034,8 +2238,13 @@ def show_settings_page(session):
     # Summary - recalculate from current session state
     current_settings = get_current_settings()
     st.subheader("League Summary")
-    total_budget = current_settings.num_teams * current_settings.budget_per_team
-    st.write(f"**Total League Budget:** ${total_budget:,}")
+    st.write(f"**Draft Type:** {current_settings.draft_type.title()}")
+    if current_settings.draft_type == "auction":
+        total_budget = current_settings.num_teams * current_settings.budget_per_team
+        st.write(f"**Total League Budget:** ${total_budget:,}")
+    else:
+        total_picks = current_settings.num_teams * current_settings.rounds_per_team
+        st.write(f"**Total Picks:** {total_picks} ({current_settings.rounds_per_team} rounds × {current_settings.num_teams} teams)")
     st.write(f"**Hitters Drafted:** {current_settings.total_hitters_drafted}")
     st.write(f"**Pitchers Drafted:** {current_settings.total_pitchers_drafted}")
 

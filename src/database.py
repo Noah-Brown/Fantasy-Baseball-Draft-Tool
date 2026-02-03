@@ -82,7 +82,7 @@ class Team(Base):
     @property
     def spent(self) -> int:
         """Total amount spent on drafted players."""
-        return sum(pick.price for pick in self.draft_picks)
+        return sum(pick.price or 0 for pick in self.draft_picks)
 
     @property
     def remaining_budget(self) -> int:
@@ -102,9 +102,13 @@ class DraftPick(Base):
 
     id = Column(Integer, primary_key=True)
     team_id = Column(Integer, ForeignKey("teams.id"), nullable=False)
-    price = Column(Integer, nullable=False)
+    price = Column(Integer, nullable=True)  # Nullable for snake drafts
     pick_number = Column(Integer)  # Order in which player was drafted
     timestamp = Column(DateTime, default=datetime.utcnow)
+
+    # Snake draft specific fields
+    round_number = Column(Integer, nullable=True)  # Which round (1-based)
+    pick_in_round = Column(Integer, nullable=True)  # Pick position within round (1-based)
 
     team = relationship("Team", back_populates="draft_picks")
     player = relationship("Player", back_populates="draft_pick", uselist=False)
@@ -128,6 +132,11 @@ class DraftState(Base):
     values_stale = Column(Boolean, default=False)
     created_at = Column(DateTime, default=datetime.utcnow)
     updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+
+    # Snake draft specific fields
+    draft_type = Column(String, default="auction")  # "auction" or "snake"
+    draft_order = Column(JSON, nullable=True)  # List of team_ids in first-round order
+    current_round = Column(Integer, default=1)  # Current round number for snake drafts
 
 
 class TargetPlayer(Base):

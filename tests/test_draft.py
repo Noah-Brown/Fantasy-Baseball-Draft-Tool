@@ -20,11 +20,24 @@ from src.settings import LeagueSettings
 
 @pytest.fixture
 def test_settings():
-    """Create test league settings with smaller values."""
+    """Create test league settings with smaller values (auction)."""
     return LeagueSettings(
         name="Test League",
         num_teams=4,
         budget_per_team=100,
+        draft_type="auction",
+    )
+
+
+@pytest.fixture
+def snake_settings():
+    """Create test league settings for snake draft."""
+    return LeagueSettings(
+        name="Test Snake League",
+        num_teams=4,
+        budget_per_team=100,
+        draft_type="snake",
+        rounds_per_team=5,
     )
 
 
@@ -425,3 +438,61 @@ class TestRemainingCalculations:
 
         # 400 - 30 - 25 = 345
         assert budget == 345
+
+
+class TestDraftTypeInitialization:
+    """Tests for draft type initialization."""
+
+    def test_auction_draft_type_set(self, session, populated_db, test_settings):
+        """Test that auction draft type is set correctly."""
+        initialize_draft(session, test_settings, "My Team")
+
+        state = get_draft_state(session)
+        assert state.draft_type == "auction"
+        assert state.draft_order is None
+
+    def test_snake_draft_type_set(self, session, populated_db, snake_settings):
+        """Test that snake draft type is set correctly."""
+        initialize_draft(session, snake_settings, "My Team")
+
+        state = get_draft_state(session)
+        assert state.draft_type == "snake"
+        assert state.draft_order is not None
+        assert len(state.draft_order) == 4
+
+    def test_snake_draft_order_default(self, session, populated_db, snake_settings):
+        """Test that snake draft order defaults to team creation order."""
+        initialize_draft(session, snake_settings, "My Team")
+
+        state = get_draft_state(session)
+        teams = get_all_teams(session)
+
+        # Draft order should match team IDs in creation order
+        assert state.draft_order == [t.id for t in teams]
+
+
+class TestNullPriceHandling:
+    """Tests for null price handling in snake drafts."""
+
+    def test_team_spent_handles_null_prices(self, session, populated_db, snake_settings):
+        """Test that Team.spent handles null prices correctly."""
+        initialize_draft(session, snake_settings, "My Team")
+        teams = get_all_teams(session)
+
+        # Draft a player (snake draft - no price)
+        draft_player(session, populated_db[0].id, teams[0].id, settings=snake_settings)
+
+        # Team spent should be 0, not error
+        session.refresh(teams[0])
+        assert teams[0].spent == 0
+
+    def test_team_remaining_budget_with_null_prices(self, session, populated_db, snake_settings):
+        """Test that remaining budget works with null prices."""
+        initialize_draft(session, snake_settings, "My Team")
+        teams = get_all_teams(session)
+
+        draft_player(session, populated_db[0].id, teams[0].id, settings=snake_settings)
+
+        session.refresh(teams[0])
+        # Budget should be unchanged since no money spent
+        assert teams[0].remaining_budget == snake_settings.budget_per_team

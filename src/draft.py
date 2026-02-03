@@ -14,7 +14,8 @@ def get_draft_state(session: Session) -> DraftState | None:
 def initialize_draft(
     session: Session,
     settings: LeagueSettings = None,
-    user_team_name: str = "My Team"
+    user_team_name: str = "My Team",
+    draft_order: list[int] = None,
 ) -> DraftState:
     """
     Initialize a new draft.
@@ -26,6 +27,8 @@ def initialize_draft(
         session: Database session
         settings: League settings (uses DEFAULT_SETTINGS if None)
         user_team_name: Name for the user's team
+        draft_order: For snake drafts, list of team IDs in first-round order.
+                    If None for snake draft, teams are ordered by ID.
 
     Returns:
         The created DraftState
@@ -37,6 +40,7 @@ def initialize_draft(
     reset_draft(session)
 
     # Create teams
+    team_ids = []
     for i in range(settings.num_teams):
         is_user = (i == 0)
         team_name = user_team_name if is_user else f"Team {i + 1}"
@@ -46,6 +50,17 @@ def initialize_draft(
             is_user_team=is_user,
         )
         session.add(team)
+        session.flush()  # Get the team ID
+        team_ids.append(team.id)
+
+    # For snake drafts, set up draft order
+    if settings.draft_type == "snake":
+        if draft_order is None:
+            # Default: use team creation order
+            draft_order = team_ids
+        final_draft_order = draft_order
+    else:
+        final_draft_order = None
 
     # Create draft state
     draft_state = DraftState(
@@ -55,6 +70,9 @@ def initialize_draft(
         current_pick=0,
         is_active=True,
         values_stale=False,
+        draft_type=settings.draft_type,
+        draft_order=final_draft_order,
+        current_round=1,
     )
     session.add(draft_state)
 
@@ -69,7 +87,7 @@ def draft_player(
     session: Session,
     player_id: int,
     team_id: int,
-    price: int,
+    price: int = None,
     settings: LeagueSettings = None
 ) -> DraftPick:
     """
@@ -79,16 +97,18 @@ def draft_player(
         session: Database session
         player_id: ID of the player to draft
         team_id: ID of the team drafting
-        price: Auction price paid
+        price: Auction price paid (required for auction, ignored for snake)
         settings: League settings for auto-recalculation (uses DEFAULT_SETTINGS if None)
 
     Returns:
         The created DraftPick
 
     Raises:
-        ValueError: If player already drafted or team doesn't have budget
+        ValueError: If player already drafted, team doesn't have budget (auction),
+                   or it's not this team's turn (snake)
     """
     from .values import calculate_remaining_player_values
+    from .snake import get_current_drafter, get_pick_position
 
     if settings is None:
         settings = DEFAULT_SETTINGS
@@ -109,24 +129,55 @@ def draft_player(
     if player.is_drafted:
         raise ValueError(f"{player.name} has already been drafted")
 
-    # Validate team has budget
-    if price > team.remaining_budget:
-        raise ValueError(
-            f"{team.name} only has ${team.remaining_budget} remaining "
-            f"(tried to spend ${price})"
-        )
+    # Draft type specific validation
+    is_snake = draft_state.draft_type == "snake"
 
-    if price < 1:
-        raise ValueError("Price must be at least $1")
+    if is_snake:
+        # Validate it's this team's turn
+        current_drafter = get_current_drafter(draft_state)
+        if current_drafter != team_id:
+            # Find the team that should be picking
+            current_team = session.get(Team, current_drafter) if current_drafter else None
+            current_team_name = current_team.name if current_team else "Unknown"
+            raise ValueError(f"It's {current_team_name}'s turn to pick, not {team.name}'s")
+
+        # Get round/pick info for snake draft
+        round_number, pick_in_round = get_pick_position(draft_state)
+        pick_price = None  # No price in snake drafts
+    else:
+        # Auction validation
+        if price is None:
+            raise ValueError("Price is required for auction drafts")
+
+        # Validate team has budget
+        if price > team.remaining_budget:
+            raise ValueError(
+                f"{team.name} only has ${team.remaining_budget} remaining "
+                f"(tried to spend ${price})"
+            )
+
+        if price < 1:
+            raise ValueError("Price must be at least $1")
+
+        round_number = None
+        pick_in_round = None
+        pick_price = price
 
     # Increment pick number
     draft_state.current_pick += 1
 
+    # Update current round for snake draft
+    if is_snake and draft_state.draft_order:
+        num_teams = len(draft_state.draft_order)
+        draft_state.current_round = ((draft_state.current_pick - 1) // num_teams) + 1
+
     # Create draft pick
     pick = DraftPick(
         team_id=team_id,
-        price=price,
+        price=pick_price,
         pick_number=draft_state.current_pick,
+        round_number=round_number,
+        pick_in_round=pick_in_round,
     )
     session.add(pick)
     session.flush()  # Get the pick ID
@@ -270,6 +321,27 @@ def get_all_teams(session: Session) -> list[Team]:
 def get_user_team(session: Session) -> Team | None:
     """Get the user's team."""
     return session.query(Team).filter(Team.is_user_team == True).first()
+
+
+def get_on_the_clock_team(session: Session) -> Team | None:
+    """
+    Get the team that is currently on the clock in a snake draft.
+
+    Returns:
+        The Team object that should pick next, or None if not a snake draft
+        or draft is complete
+    """
+    from .snake import get_current_drafter
+
+    draft_state = get_draft_state(session)
+    if not draft_state or draft_state.draft_type != "snake":
+        return None
+
+    team_id = get_current_drafter(draft_state)
+    if team_id is None:
+        return None
+
+    return session.get(Team, team_id)
 
 
 def get_remaining_roster_slots(session: Session, settings: LeagueSettings = None) -> dict:

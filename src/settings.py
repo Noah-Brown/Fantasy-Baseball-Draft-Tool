@@ -12,6 +12,10 @@ class LeagueSettings:
     budget_per_team: int = 260
     min_bid: int = 1
 
+    # Draft format
+    draft_type: str = "auction"  # "auction" or "snake"
+    rounds_per_team: int = 23  # For snake drafts: total roster size
+
     # Roster configuration
     roster_spots: dict = field(default_factory=lambda: {
         "C": 1,
