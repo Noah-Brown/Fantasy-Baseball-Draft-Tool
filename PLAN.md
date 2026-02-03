@@ -211,7 +211,7 @@ Steamer CSV → Import → Player DB → SGP Calculation → Dollar Values
 - [x] 3. Best Available by Position
 - [x] 4. Inflation/Deflation Tracker
 - [x] 5. Category Balance Dashboard
-- [ ] 6. Team Needs Analysis
+- [x] 6. Team Needs Analysis
 - [x] 7. Max Affordable Bid Calculator
 - [ ] 8. Opponent Needs Tracker
 - [ ] 9. Budget Pressure Alerts

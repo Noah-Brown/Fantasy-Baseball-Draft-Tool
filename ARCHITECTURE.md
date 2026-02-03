@@ -38,6 +38,11 @@ The Fantasy Baseball Draft Tool is a local Streamlit application for managing fa
 │  │   .py       │  │    .py      │  │    .py      │  │   .py     │  │
 │  └──────┬──────┘  └──────┬──────┘  └──────┬──────┘  └─────┬─────┘  │
 │         │                │                │                │        │
+│         │         ┌──────┴──────┐         │                │        │
+│         │         │   needs.py  │◄────────┘                │        │
+│         │         │             │                          │        │
+│         │         └──────┬──────┘                          │        │
+│         │                │                │                │        │
 │         └────────────────┴────────────────┴────────────────┘        │
 │                                  │                                  │
 │                                  v                                  │
@@ -123,6 +128,7 @@ The Fantasy Baseball Draft Tool is a local Streamlit application for managing fa
 | **Draft** | `src/draft.py` | Draft state management, team operations, pick tracking, undo functionality |
 | **Values** | `src/values.py` | SGP calculation engine, dollar value conversion, value recalculation |
 | **Positions** | `src/positions.py` | Position constants, composite position handling (CI/MI), eligibility checking |
+| **Needs** | `src/needs.py` | Team needs analysis, positional roster tracking, player recommendations |
 | **App** | `app.py` | Streamlit UI, page routing, session state management |
 
 ---
@@ -700,6 +706,72 @@ def calculate_category_surplus(
     price_paid: int
 ) -> dict[str, float]
     """Distribute surplus across categories proportionally."""
+
+def get_category_weak_points(
+    analysis: dict,
+    threshold: int = 7
+) -> list[dict]
+    """Identify weak categories from team analysis."""
+```
+
+### needs.py
+
+```python
+@dataclass
+class PositionalRosterState:
+    """State of a single roster position slot."""
+    position: str       # e.g., "C", "1B", "CI"
+    required: int       # Slots from roster_spots
+    filled: int         # Players assigned to this slot
+    remaining: int      # Slots still needed
+    players: list       # Players filling this slot
+
+@dataclass
+class PlayerRecommendation:
+    """A recommended player with scoring breakdown."""
+    player: Player
+    composite_score: float
+    position_urgency: float
+    category_fit: float
+    value_surplus: float
+    fills_positions: list[str]
+    helps_categories: list[str]
+
+@dataclass
+class TeamNeedsAnalysis:
+    """Complete team needs analysis result."""
+    positional_states: list[PositionalRosterState]
+    recommendations: list[PlayerRecommendation]
+    category_analysis: dict
+    comparative_standings: dict
+
+def get_team_positional_roster_state(
+    session: Session,
+    team: Team,
+    settings: LeagueSettings
+) -> list[PositionalRosterState]
+    """Get positional fill status using greedy slot assignment."""
+
+def analyze_team_needs(
+    session: Session,
+    team: Team,
+    settings: LeagueSettings
+) -> TeamNeedsAnalysis
+    """Perform complete team needs analysis."""
+
+def get_player_recommendations(
+    session: Session,
+    team: Team,
+    settings: LeagueSettings,
+    limit: int = 10
+) -> list[PlayerRecommendation]
+    """Get smart player recommendations based on needs."""
+
+def calculate_all_team_standings(
+    session: Session,
+    settings: LeagueSettings
+) -> dict[str, dict[str, int]]
+    """Calculate comparative standings for all teams."""
 ```
 
 ### positions.py
@@ -749,7 +821,8 @@ Fantasy-Baseball-Draft-Tool/
 │   ├── settings.py           # League configuration
 │   ├── draft.py              # Draft management
 │   ├── values.py             # SGP calculation engine
-│   └── positions.py          # Position constants and CI/MI utilities
+│   ├── positions.py          # Position constants and CI/MI utilities
+│   └── needs.py              # Team needs analysis and recommendations
 ├── data/                     # CSV data storage (gitignored)
 │   └── .gitkeep
 ├── tests/
@@ -759,7 +832,8 @@ Fantasy-Baseball-Draft-Tool/
 │   ├── test_projections.py   # CSV import tests
 │   ├── test_settings.py      # Settings tests
 │   ├── test_values.py        # SGP calculation tests
-│   └── test_positions.py     # Position utilities tests
+│   ├── test_positions.py     # Position utilities tests
+│   └── test_needs.py         # Team needs analysis tests
 └── draft.db                  # SQLite database (created at runtime)
 ```
 
@@ -780,6 +854,7 @@ Test coverage by module:
 - `test_settings.py`: Configuration validation
 - `test_values.py`: SGP calculations, edge cases
 - `test_positions.py`: Position expansion, CI/MI eligibility, composite positions
+- `test_needs.py`: Team needs analysis, positional roster state, recommendations
 
 ---
 
