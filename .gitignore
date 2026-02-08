@@ -30,3 +30,8 @@ data/*.csv
 # Coverage
 .coverage
 htmlcov/
+
+# Deployment secrets
+.htpasswd
+ssl/
+data/
