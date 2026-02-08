@@ -217,7 +217,7 @@ Steamer CSV → Import → Player DB → SGP Calculation → Dollar Values
 - [ ] 9. Budget Pressure Alerts
 - [x] 10. Quick Search / Hotkey
 - [ ] 11. Nomination Queue
-- [ ] 12. One-Click Draft
+- [x] 12. One-Click Draft
 - [ ] 13. Sound/Visual Alerts
 - [ ] 14. Player Comparison Tool
 - [ ] 15. Draft Replay / History Analysis
