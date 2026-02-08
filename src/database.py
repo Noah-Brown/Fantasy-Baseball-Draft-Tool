@@ -1,6 +1,6 @@
 """Database models for the fantasy baseball draft tool."""
 
-from datetime import datetime
+from datetime import datetime, timezone
 from sqlalchemy import create_engine, Column, Integer, String, Float, Boolean, DateTime, ForeignKey, JSON
 from sqlalchemy.orm import declarative_base, relationship, sessionmaker
 
@@ -104,7 +104,7 @@ class DraftPick(Base):
     team_id = Column(Integer, ForeignKey("teams.id"), nullable=False)
     price = Column(Integer, nullable=True)  # Nullable for snake drafts
     pick_number = Column(Integer)  # Order in which player was drafted
-    timestamp = Column(DateTime, default=datetime.utcnow)
+    timestamp = Column(DateTime, default=lambda: datetime.now(timezone.utc))
 
     # Snake draft specific fields
     round_number = Column(Integer, nullable=True)  # Which round (1-based)
@@ -130,8 +130,8 @@ class DraftState(Base):
     current_pick = Column(Integer, default=0)
     is_active = Column(Boolean, default=False)
     values_stale = Column(Boolean, default=False)
-    created_at = Column(DateTime, default=datetime.utcnow)
-    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+    created_at = Column(DateTime, default=lambda: datetime.now(timezone.utc))
+    updated_at = Column(DateTime, default=lambda: datetime.now(timezone.utc), onupdate=lambda: datetime.now(timezone.utc))
 
     # Snake draft specific fields
     draft_type = Column(String, default="auction")  # "auction" or "snake"
@@ -149,7 +149,7 @@ class TargetPlayer(Base):
     max_bid = Column(Integer, nullable=False)  # Maximum price willing to pay
     priority = Column(Integer, default=0)  # Higher = more important (for sorting)
     notes = Column(String)  # Optional notes about the player
-    created_at = Column(DateTime, default=datetime.utcnow)
+    created_at = Column(DateTime, default=lambda: datetime.now(timezone.utc))
 
     player = relationship("Player", backref="target")
 

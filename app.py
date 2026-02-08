@@ -947,7 +947,7 @@ def show_draft_room(session):
 
         styled_df = df.style.apply(highlight_targets, axis=1)
         if sgp_cols:
-            styled_df = styled_df.applymap(style_sgp, subset=sgp_cols)
+            styled_df = styled_df.map(style_sgp, subset=sgp_cols)
             # Format SGP columns to exactly 2 decimal places
             styled_df = styled_df.format({col: "{:.2f}" for col in sgp_cols})
 
@@ -1556,7 +1556,7 @@ def show_my_team(session):
         if show_category_surplus:
             surplus_cols += [col for col in df.columns if col.endswith('+/-')]
 
-        styled_df = df.style.applymap(style_surplus, subset=[c for c in surplus_cols if c in df.columns])
+        styled_df = df.style.map(style_surplus, subset=[c for c in surplus_cols if c in df.columns])
 
         st.dataframe(
             styled_df,
@@ -1784,7 +1784,7 @@ def render_comparative_standings(comparative_standings: dict, user_team_name: st
         return [''] * len(row)
 
     cat_cols = [c.upper() for c in all_cats]
-    styled_df = df.style.applymap(style_standing, subset=[c for c in cat_cols if c in df.columns])
+    styled_df = df.style.map(style_standing, subset=[c for c in cat_cols if c in df.columns])
     styled_df = styled_df.apply(highlight_user_team, axis=1)
 
     st.dataframe(
@@ -1901,7 +1901,7 @@ def show_all_teams(session):
             comparison_df = pd.DataFrame(comparison_rows)
             # Style positive/negative values
             cat_cols = ["R", "HR", "RBI", "SB", "AVG", "W", "SV", "K", "ERA", "WHIP"]
-            styled_comparison = comparison_df.style.applymap(
+            styled_comparison = comparison_df.style.map(
                 style_surplus,
                 subset=[c for c in cat_cols if c in comparison_df.columns]
             )
@@ -1958,7 +1958,7 @@ def show_all_teams(session):
                 if show_category_surplus:
                     surplus_cols += [col for col in df.columns if col.endswith('+/-')]
 
-                styled_df = df.style.applymap(style_surplus, subset=[c for c in surplus_cols if c in df.columns])
+                styled_df = df.style.map(style_surplus, subset=[c for c in surplus_cols if c in df.columns])
                 st.dataframe(
                     styled_df,
                     width='stretch',
