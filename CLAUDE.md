@@ -56,7 +56,7 @@ CSV import (`projections.py`) -> Player records in SQLite -> SGP calculation (`v
 - **Rate stats** (AVG, ERA, WHIP) use weighted SGP calculation (by PA or IP). ERA/WHIP are inverted (lower = better).
 - **Database sessions**: Each page function gets a fresh SQLAlchemy session. `@st.cache_resource` used for engine/session factory.
 - **Auto-load**: App checks for CSV files in `data/` folder on startup; imports automatically if DB is empty.
-- **Authentication**: HTTP Basic Auth at nginx level only (`.htpasswd`), not in the application. Single-league shared tool, not multi-tenant.
+- **Authentication**: HTTP Basic Auth at nginx level only, not in the application. Single-league shared tool, not multi-tenant. The `.htpasswd` file lives in the **project root** (mounted read-only into the nginx container); after changes, run `docker-compose restart nginx`.
 
 ### Testing
 
