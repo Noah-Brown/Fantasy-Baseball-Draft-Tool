@@ -409,6 +409,92 @@ def show_player_database(session):
         st.info("All displayed players are either already targeted or drafted.")
 
 
+@st.dialog("Draft Player")
+def draft_player_dialog(player, session, settings, draft_state):
+    """Dialog for confirming a player draft from the available players table."""
+    is_snake = draft_state.draft_type == "snake"
+
+    st.markdown(f"### {player.name}")
+    st.caption(f"{player.positions} | {player.team or 'FA'} | {player.player_type.title()}")
+
+    if is_snake:
+        if player.sgp:
+            st.metric("SGP", f"{player.sgp:.1f}")
+    else:
+        if player.dollar_value:
+            st.metric("Value", f"${player.dollar_value:.0f}")
+
+    st.divider()
+
+    if is_snake:
+        on_clock_team = get_on_the_clock_team(session)
+        if not on_clock_team:
+            st.error("No team on the clock. Draft may be complete.")
+            return
+
+        st.info(f"Drafting for: **{on_clock_team.name}**")
+
+        if st.button("Confirm Draft Pick", type="primary", use_container_width=True):
+            try:
+                draft_player(session, player.id, on_clock_team.id, settings=settings)
+                st.success(f"Drafted {player.name}!")
+                if "available_players_table" in st.session_state:
+                    del st.session_state["available_players_table"]
+                st.rerun()
+            except ValueError as e:
+                st.error(str(e))
+    else:
+        teams = get_all_teams(session)
+        user_team = get_user_team(session)
+
+        team_options = {
+            f"{t.name} (${t.remaining_budget})": t.id
+            for t in teams
+        }
+
+        default_idx = 0
+        if user_team:
+            for idx, label in enumerate(team_options.keys()):
+                if user_team.name in label:
+                    default_idx = idx
+                    break
+
+        selected_team_label = st.selectbox(
+            "Team",
+            options=list(team_options.keys()),
+            index=default_idx,
+            key="dialog_draft_team",
+        )
+        selected_team_id = team_options[selected_team_label]
+
+        default_price = int(player.dollar_value) if player.dollar_value else 1
+        price = st.number_input(
+            "Price ($)",
+            min_value=1,
+            max_value=999,
+            value=default_price,
+            key="dialog_draft_price",
+        )
+
+        selected_team = session.get(Team, selected_team_id)
+        if selected_team:
+            max_bid_info = calculate_max_bid(session, selected_team, settings)
+            st.caption(f"Max affordable bid: **${max_bid_info['max_bid']}**")
+
+            if price > max_bid_info['max_bid']:
+                st.warning(f"Over max by ${price - max_bid_info['max_bid']}!")
+
+        if st.button("Confirm Draft", type="primary", use_container_width=True):
+            try:
+                draft_player(session, player.id, selected_team_id, price, settings)
+                st.success(f"Drafted {player.name} for ${price}!")
+                if "available_players_table" in st.session_state:
+                    del st.session_state["available_players_table"]
+                st.rerun()
+            except ValueError as e:
+                st.error(str(e))
+
+
 def show_draft_room(session):
     """Draft Room page for conducting the auction or snake draft."""
     st.header("Draft Room")
@@ -877,6 +963,7 @@ def show_draft_room(session):
                 target_display = ""
 
             row = {
+                "_player_id": p.id,
                 "Target": target_display,
                 "Name": p.name,
                 "Team": p.team or "",
@@ -926,17 +1013,8 @@ def show_draft_room(session):
 
         df = pd.DataFrame(rows)
 
-        # Style function to highlight target rows
-        def highlight_targets(row):
-            if row.name in target_rows:
-                # Check if it's a bargain (🎯) or just a target (⭐)
-                if "🎯" in str(row.get("Target", "")):
-                    return ["background-color: #c8e6c9"] * len(row)  # Light green for bargains
-                else:
-                    return ["background-color: #fff9c4"] * len(row)  # Light yellow for targets
-            return [""] * len(row)
-
-        # Identify SGP columns for color-coding
+        # Build column config: hide _player_id, format SGP columns
+        column_config = {"_player_id": None}
         sgp_cols = []
         if show_category_sgp and player_type != "All":
             if player_type == "Hitters":
@@ -944,20 +1022,29 @@ def show_draft_room(session):
             elif player_type == "Pitchers":
                 sgp_cols = [f"{cat.upper()} SGP" for cat in ["w", "sv", "k", "era", "whip"]]
             sgp_cols = [c for c in sgp_cols if c in df.columns]
+            for col in sgp_cols:
+                column_config[col] = st.column_config.NumberColumn(col, format="%.2f")
 
-        styled_df = df.style.apply(highlight_targets, axis=1)
-        if sgp_cols:
-            styled_df = styled_df.map(style_sgp, subset=sgp_cols)
-            # Format SGP columns to exactly 2 decimal places
-            styled_df = styled_df.format({col: "{:.2f}" for col in sgp_cols})
-
-        st.dataframe(
-            styled_df,
+        selection = st.dataframe(
+            df,
             width='stretch',
             hide_index=True,
+            selection_mode="single-row",
+            on_select="rerun",
+            key="available_players_table",
+            column_config=column_config,
         )
 
+        # Open draft dialog when a row is selected
+        if selection and selection.selection and selection.selection.rows:
+            selected_row_idx = selection.selection.rows[0]
+            selected_player_id = int(df.iloc[selected_row_idx]["_player_id"])
+            selected_player = session.get(Player, selected_player_id)
+            if selected_player and not selected_player.is_drafted:
+                draft_player_dialog(selected_player, session, settings, draft_state)
+
         # Legend
+        st.caption("Click a row to draft that player")
         if is_snake:
             st.caption(f"Showing top {len(available)} available players by rank")
         else:
