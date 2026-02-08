@@ -8,6 +8,7 @@ A Streamlit-based application for managing fantasy baseball auction drafts with 
 - **Steamer Projections**: Import projections directly from Fangraphs CSV exports
 - **League Settings**: Configure teams, budgets, roster spots, and scoring categories
 - **5x5 Scoring**: Standard rotisserie categories (R, HR, RBI, SB, AVG / W, SV, K, ERA, WHIP)
+- **Draft Notes**: Add persistent free-text notes to any player (e.g., injury concerns, sleeper picks, avoid)
 
 ## Installation
 

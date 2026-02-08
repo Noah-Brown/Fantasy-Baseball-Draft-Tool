@@ -224,7 +224,7 @@ Steamer CSV → Import → Player DB → SGP Calculation → Dollar Values
 - [ ] 16. Tier-Based Grouping
 - [ ] 17. Dark Mode
 - [ ] 18. Mobile/Tablet View
-- [ ] 19. Draft Notes
+- [x] 19. Draft Notes
 - [ ] 20. Undo with Confirmation
 - [x] 21. Positional Price Adjustments
 

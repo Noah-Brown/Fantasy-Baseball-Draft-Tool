@@ -48,6 +48,9 @@ class Player(Base):
     draft_pick_id = Column(Integer, ForeignKey("draft_picks.id"), nullable=True)
     draft_pick = relationship("DraftPick", back_populates="player")
 
+    # User annotations
+    note = Column(String)  # Free-text draft note (e.g., "injury", "sleeper", "avoid")
+
     def __repr__(self):
         return f"<Player {self.name} ({self.positions})>"
 

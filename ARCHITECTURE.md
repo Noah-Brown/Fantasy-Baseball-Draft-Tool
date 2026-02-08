@@ -157,6 +157,7 @@ The Fantasy Baseball Draft Tool is a local Streamlit application for managing fa
 │     dollar_value: Float                                              │
 │     sgp_breakdown: JSON                                              │
 │     is_drafted: Boolean                                              │
+│     note: String (user annotation)                                   │
 │ FK  draft_pick_id: Integer ─────────────────────┐                    │
 └─────────────────────────────────────────────────┼────────────────────┘
                                                   │
@@ -833,7 +834,8 @@ Fantasy-Baseball-Draft-Tool/
 │   ├── test_settings.py      # Settings tests
 │   ├── test_values.py        # SGP calculation tests
 │   ├── test_positions.py     # Position utilities tests
-│   └── test_needs.py         # Team needs analysis tests
+│   ├── test_needs.py         # Team needs analysis tests
+│   └── test_draft_notes.py   # Draft notes tests
 └── draft.db                  # SQLite database (created at runtime)
 ```
 
@@ -855,6 +857,7 @@ Test coverage by module:
 - `test_values.py`: SGP calculations, edge cases
 - `test_positions.py`: Position expansion, CI/MI eligibility, composite positions
 - `test_needs.py`: Team needs analysis, positional roster state, recommendations
+- `test_draft_notes.py`: Player note CRUD, persistence through draft operations
 
 ---
 

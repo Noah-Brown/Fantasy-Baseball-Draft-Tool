@@ -424,6 +424,24 @@ def draft_player_dialog(player, session, settings, draft_state):
         if player.dollar_value:
             st.metric("Value", f"${player.dollar_value:.0f}")
 
+    # Show existing note
+    if player.note:
+        st.info(f"Note: {player.note}")
+
+    # Edit note
+    new_note = st.text_input(
+        "Draft Note",
+        value=player.note or "",
+        placeholder="e.g., injury concern, sleeper, avoid...",
+        key="dialog_note",
+    )
+    if new_note != (player.note or ""):
+        if st.button("Save Note", key="dialog_save_note"):
+            player.note = new_note if new_note else None
+            session.commit()
+            st.success("Note saved!")
+            st.rerun()
+
     st.divider()
 
     if is_snake:
@@ -962,6 +980,11 @@ def show_draft_room(session):
             else:
                 target_display = ""
 
+            # Build note display
+            note_display = ""
+            if p.note:
+                note_display = p.note if len(p.note) <= 30 else p.note[:30] + "..."
+
             row = {
                 "_player_id": p.id,
                 "Target": target_display,
@@ -969,6 +992,7 @@ def show_draft_room(session):
                 "Team": p.team or "",
                 "Type": p.player_type.title() if p.player_type else "",
                 "Pos": p.positions or "",
+                "Note": note_display,
             }
 
             # Show Rank for snake, Value for auction
@@ -1065,6 +1089,66 @@ def show_draft_room(session):
         )
     else:
         st.info("No available players match the current filters.")
+
+    # Player Notes management
+    st.divider()
+    with st.expander("Player Notes"):
+        note_search = st.text_input(
+            "Search player to add/edit note",
+            placeholder="Player name...",
+            key="note_search",
+        )
+
+        if note_search:
+            note_matches = (
+                session.query(Player)
+                .filter(Player.name.ilike(f"%{note_search}%"))
+                .limit(10)
+                .all()
+            )
+            if note_matches:
+                for np in note_matches:
+                    col_name, col_note, col_save = st.columns([2, 3, 1])
+                    with col_name:
+                        drafted_marker = " (drafted)" if np.is_drafted else ""
+                        st.text(f"{np.name}{drafted_marker}")
+                    with col_note:
+                        updated_note = st.text_input(
+                            "Note",
+                            value=np.note or "",
+                            placeholder="Add a note...",
+                            key=f"note_edit_{np.id}",
+                            label_visibility="collapsed",
+                        )
+                    with col_save:
+                        if st.button("Save", key=f"note_save_{np.id}"):
+                            np.note = updated_note if updated_note else None
+                            session.commit()
+                            st.rerun()
+            else:
+                st.caption("No players found.")
+
+        # Show all players with notes
+        noted_players = (
+            session.query(Player)
+            .filter(Player.note.isnot(None), Player.note != "")
+            .order_by(Player.name)
+            .all()
+        )
+        if noted_players:
+            st.markdown(f"**All Notes** ({len(noted_players)})")
+            for np in noted_players:
+                col_name, col_note, col_clear = st.columns([2, 3, 1])
+                with col_name:
+                    drafted_marker = " (drafted)" if np.is_drafted else ""
+                    st.text(f"{np.name}{drafted_marker}")
+                with col_note:
+                    st.caption(np.note)
+                with col_clear:
+                    if st.button("Clear", key=f"note_clear_{np.id}"):
+                        np.note = None
+                        session.commit()
+                        st.rerun()
 
     # Draft history
     st.divider()
