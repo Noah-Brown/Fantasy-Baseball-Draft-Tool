@@ -35,6 +35,7 @@ PITCHER_COLUMN_MAP = {
     "WHIP": "whip",
     "BB": "bb",
     "HLD": "hld",
+    "K/9": "k9",
 }
 
 
@@ -127,6 +128,14 @@ def import_pitchers_csv(session: Session, csv_path: str | Path) -> int:
             if ip and ip > 0:
                 whip = (bb + h_val) / ip
 
+        # K/9 fallback: compute from (K * 9) / IP if not in CSV
+        k9 = _safe_float(row.get("K/9"))
+        if k9 is None:
+            k_val = _safe_float(k_value)
+            ip = _safe_float(row.get("IP"))
+            if k_val and ip and ip > 0:
+                k9 = (k_val * 9) / ip
+
         player = Player(
             name=row.get("Name", ""),
             team=row.get("Team", ""),
@@ -140,6 +149,8 @@ def import_pitchers_csv(session: Session, csv_path: str | Path) -> int:
             k=_safe_float(k_value),
             era=_safe_float(row.get("ERA")),
             whip=whip,
+            k9=k9,
+            hld=_safe_float(row.get("HLD")),
         )
         session.add(player)
         count += 1

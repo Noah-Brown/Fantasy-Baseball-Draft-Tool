@@ -10,10 +10,13 @@ from .settings import LeagueSettings, DEFAULT_SETTINGS
 
 # Counting stats (higher is better)
 HITTER_COUNTING_STATS = ["r", "hr", "rbi", "sb"]
-PITCHER_COUNTING_STATS = ["w", "sv", "k"]
+PITCHER_COUNTING_STATS = ["w", "sv", "k", "hld"]
 
 # Rate stats (weighted by plate appearances/innings)
-HITTER_RATE_STATS = ["avg"]  # Weighted by AB
+HITTER_RATE_STATS = ["avg", "obp", "slg"]  # Weighted by AB/PA
+
+# Pitcher rate stats (higher is better, weighted by IP)
+PITCHER_RATE_STATS = ["k9"]  # Weighted by IP
 
 # Ratio stats (lower is better)
 PITCHER_RATIO_STATS = ["era", "whip"]  # Weighted by IP
@@ -414,26 +417,34 @@ def _calculate_preliminary_value(
         value += (getattr(player, "rbi", 0) or 0) / 100.0  # ~100 RBI is good
         value += (getattr(player, "sb", 0) or 0) / 20.0  # ~20 SB is good
 
-        # AVG contribution (above .250 baseline)
+        # Rate stat contributions (above baseline, scaled by playing time)
         avg = getattr(player, "avg", 0) or 0
+        obp = getattr(player, "obp", 0) or 0
+        slg = getattr(player, "slg", 0) or 0
         ab = getattr(player, "ab", 0) or 0
         if ab > 0:
-            value += (avg - 0.250) * (ab / 500.0) * 10  # Scale by playing time
+            value += (avg - 0.250) * (ab / 500.0) * 10
+            value += (obp - 0.320) * (ab / 500.0) * 10
+            value += (slg - 0.400) * (ab / 500.0) * 5
     else:
         # Pitcher preliminary value
         value += (getattr(player, "w", 0) or 0) / 15.0  # ~15 wins is good
         value += (getattr(player, "sv", 0) or 0) / 30.0  # ~30 saves is good
         value += (getattr(player, "k", 0) or 0) / 200.0  # ~200 K is good
+        value += (getattr(player, "hld", 0) or 0) / 20.0  # ~20 holds is good
 
         # ERA/WHIP contribution (below league average is good)
         era = getattr(player, "era", 0) or 0
         whip = getattr(player, "whip", 0) or 0
         ip = getattr(player, "ip", 0) or 0
+        k9 = getattr(player, "k9", 0) or 0
 
         if ip > 0 and era > 0:
             value += (4.50 - era) * (ip / 200.0)  # Scale by innings
         if ip > 0 and whip > 0:
             value += (1.35 - whip) * (ip / 200.0) * 5  # Scale by innings
+        if ip > 0 and k9 > 0:
+            value += (k9 - 7.0) * (ip / 200.0)  # Scale by innings
 
     return value
 
@@ -451,20 +462,36 @@ def _calculate_sgp_denominators(
     for category in categories:
         cat_lower = category.lower()
 
-        if player_type == "hitter" and cat_lower == "avg":
-            # For AVG, use weighted hits
+        if player_type == "hitter" and cat_lower in HITTER_RATE_STATS:
+            # For rate stats (AVG, OBP, SLG), use weighted values
             values = []
             for p in players:
                 ab = getattr(p, "ab", 0) or 0
-                h = getattr(p, "h", 0) or 0
-                if ab > 0:
-                    values.append(h)
+                pa = getattr(p, "pa", 0) or 0
+                stat = getattr(p, cat_lower, 0) or 0
+                # AVG and SLG weight by AB; OBP weights by PA
+                weight = pa if cat_lower == "obp" else ab
+                if weight > 0 and stat > 0:
+                    values.append(stat * weight)
             if len(values) >= 2:
                 denominators[cat_lower] = statistics.stdev(values)
             else:
                 denominators[cat_lower] = 1.0
 
-        elif player_type == "pitcher" and cat_lower in ["era", "whip"]:
+        elif player_type == "pitcher" and cat_lower in PITCHER_RATE_STATS:
+            # For pitcher rate stats (K/9), weight by IP (higher is better)
+            values = []
+            for p in players:
+                ip = getattr(p, "ip", 0) or 0
+                stat = getattr(p, cat_lower, 0) or 0
+                if ip > 0 and stat > 0:
+                    values.append(stat * ip)
+            if len(values) >= 2:
+                denominators[cat_lower] = statistics.stdev(values)
+            else:
+                denominators[cat_lower] = 1.0
+
+        elif player_type == "pitcher" and cat_lower in PITCHER_RATIO_STATS:
             # For ratio stats, weight by IP
             values = []
             for p in players:
@@ -504,10 +531,11 @@ def _get_player_stats(
         cat_lower = category.lower()
         stats[cat_lower] = getattr(player, cat_lower, 0) or 0
 
-    # Include AB/IP for rate stat calculations
+    # Include AB/PA/IP for rate stat calculations
     if player_type == "hitter":
         stats["ab"] = getattr(player, "ab", 0) or 0
         stats["h"] = getattr(player, "h", 0) or 0
+        stats["pa"] = getattr(player, "pa", 0) or 0
     else:
         stats["ip"] = getattr(player, "ip", 0) or 0
 
@@ -537,19 +565,35 @@ def _calculate_player_sgp(
         replacement_stat = replacement_stats.get(cat_lower, 0)
         denominator = denominators.get(cat_lower, 1.0)
 
-        if player_type == "hitter" and cat_lower == "avg":
-            # AVG: Compare weighted hits (player H vs expected H at replacement AVG)
+        if player_type == "hitter" and cat_lower in HITTER_RATE_STATS:
+            # Rate stats (AVG, OBP, SLG): weighted by playing time
             player_ab = getattr(player, "ab", 0) or 0
-            player_h = getattr(player, "h", 0) or 0
-            replacement_avg = replacement_stat
+            player_pa = getattr(player, "pa", 0) or 0
+            # AVG uses H vs expected H; OBP/SLG use direct rate difference × weight
+            if cat_lower == "avg":
+                player_h = getattr(player, "h", 0) or 0
+                if player_ab > 0 and replacement_stat > 0:
+                    expected_h = player_ab * replacement_stat
+                    sgp = (player_h - expected_h) / denominator
+                else:
+                    sgp = 0
+            else:
+                # OBP weights by PA, SLG weights by AB
+                weight = player_pa if cat_lower == "obp" else player_ab
+                if weight > 0:
+                    sgp = (player_stat - replacement_stat) * weight / denominator
+                else:
+                    sgp = 0
 
-            if player_ab > 0 and replacement_avg > 0:
-                expected_h = player_ab * replacement_avg
-                sgp = (player_h - expected_h) / denominator
+        elif player_type == "pitcher" and cat_lower in PITCHER_RATE_STATS:
+            # K/9: Higher is better, weight by IP
+            player_ip = getattr(player, "ip", 0) or 0
+            if player_ip > 0 and player_stat > 0:
+                sgp = (player_stat - replacement_stat) * player_ip / denominator
             else:
                 sgp = 0
 
-        elif player_type == "pitcher" and cat_lower in ["era", "whip"]:
+        elif player_type == "pitcher" and cat_lower in PITCHER_RATIO_STATS:
             # ERA/WHIP: Lower is better, weight by IP
             player_ip = getattr(player, "ip", 0) or 0
 

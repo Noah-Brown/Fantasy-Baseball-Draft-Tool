@@ -183,13 +183,18 @@ def get_current_settings() -> LeagueSettings:
     if "rounds_per_team" not in st.session_state.league_settings:
         st.session_state.league_settings["rounds_per_team"] = DEFAULT_SETTINGS.rounds_per_team
 
+    # Build category lists from core + optional
+    hitting_categories = ["R", "HR", "RBI", "SB", "AVG"] + state.get("optional_hitting_cats", [])
+    pitching_categories = ["W", "SV", "K", "ERA", "WHIP"] + state.get("optional_pitching_cats", [])
+
     # Build LeagueSettings from session state
-    state = st.session_state.league_settings
     return LeagueSettings(
         num_teams=state["num_teams"],
         budget_per_team=state["budget_per_team"],
         min_bid=state["min_bid"],
         roster_spots=state["roster_spots"],
+        hitting_categories=hitting_categories,
+        pitching_categories=pitching_categories,
         use_positional_adjustments=state.get("use_positional_adjustments", True),
         draft_type=state.get("draft_type", "auction"),
         rounds_per_team=state.get("rounds_per_team", 23),
@@ -2213,11 +2218,35 @@ def show_settings_page(session):
 
     with col2:
         st.subheader("Scoring Categories")
-        st.markdown("**Hitting (5x5)**")
-        st.text(", ".join(settings.hitting_categories))
+        st.markdown("**Hitting**")
+        st.text("R, HR, RBI, SB, AVG")
 
-        st.markdown("**Pitching (5x5)**")
-        st.text(", ".join(settings.pitching_categories))
+        opt_hitting = st.session_state.league_settings.get("optional_hitting_cats", [])
+        obp_on = st.checkbox("OBP", value="OBP" in opt_hitting, key="cat_obp")
+        slg_on = st.checkbox("SLG", value="SLG" in opt_hitting, key="cat_slg")
+        new_opt_hitting = []
+        if obp_on:
+            new_opt_hitting.append("OBP")
+        if slg_on:
+            new_opt_hitting.append("SLG")
+        st.session_state.league_settings["optional_hitting_cats"] = new_opt_hitting
+
+        st.markdown("**Pitching**")
+        st.text("W, SV, K, ERA, WHIP")
+
+        opt_pitching = st.session_state.league_settings.get("optional_pitching_cats", [])
+        k9_on = st.checkbox("K/9", value="K9" in opt_pitching, key="cat_k9")
+        hld_on = st.checkbox("HLD", value="HLD" in opt_pitching, key="cat_hld")
+        new_opt_pitching = []
+        if k9_on:
+            new_opt_pitching.append("K9")
+        if hld_on:
+            new_opt_pitching.append("HLD")
+        st.session_state.league_settings["optional_pitching_cats"] = new_opt_pitching
+
+        all_hitting = ["R", "HR", "RBI", "SB", "AVG"] + new_opt_hitting
+        all_pitching = ["W", "SV", "K", "ERA", "WHIP"] + new_opt_pitching
+        st.caption(f"Active: {len(all_hitting)}x{len(all_pitching)}")
 
         st.divider()
 
@@ -2296,6 +2325,8 @@ def show_settings_page(session):
             "use_positional_adjustments": DEFAULT_SETTINGS.use_positional_adjustments,
             "draft_type": DEFAULT_SETTINGS.draft_type,
             "rounds_per_team": DEFAULT_SETTINGS.rounds_per_team,
+            "optional_hitting_cats": [],
+            "optional_pitching_cats": [],
         }
         st.rerun()
 

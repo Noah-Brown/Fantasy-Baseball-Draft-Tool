@@ -273,6 +273,39 @@ Gerrit Cole,NYY,200,15,0,250,3.00,1.00,13125,543037"""
         assert pitcher.fangraphs_id == "13125"
         assert pitcher.mlbam_id == "543037"
 
+    def test_import_pitchers_k9_from_csv(self, session, tmp_csv_path):
+        """Test that K/9 is imported directly from CSV."""
+        csv_content = """Name,Team,IP,W,SV,SO,ERA,WHIP,K/9
+Test Pitcher,NYY,200,15,0,250,3.00,1.00,11.25"""
+        csv_path = tmp_csv_path("pitchers.csv", csv_content)
+
+        import_pitchers_csv(session, csv_path)
+
+        pitcher = get_all_pitchers(session)[0]
+        assert pitcher.k9 == 11.25
+
+    def test_import_pitchers_k9_fallback(self, session, tmp_csv_path):
+        """Test that K/9 is computed from K and IP when not in CSV."""
+        csv_content = """Name,Team,IP,W,SV,SO,ERA,WHIP
+Test Pitcher,NYY,200,15,0,200,3.00,1.00"""
+        csv_path = tmp_csv_path("pitchers.csv", csv_content)
+
+        import_pitchers_csv(session, csv_path)
+
+        pitcher = get_all_pitchers(session)[0]
+        assert pitcher.k9 == pytest.approx(9.0)  # (200 * 9) / 200
+
+    def test_import_pitchers_hld(self, session, tmp_csv_path):
+        """Test that HLD is imported from CSV."""
+        csv_content = """Name,Team,IP,W,SV,SO,ERA,WHIP,HLD
+Test Reliever,NYY,60,3,0,70,2.50,0.95,25"""
+        csv_path = tmp_csv_path("pitchers.csv", csv_content)
+
+        import_pitchers_csv(session, csv_path)
+
+        pitcher = get_all_pitchers(session)[0]
+        assert pitcher.hld == 25.0
+
 
 class TestPlayerQueries:
     """Tests for player query functions."""

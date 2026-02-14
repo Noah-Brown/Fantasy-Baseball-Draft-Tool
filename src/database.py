@@ -42,6 +42,8 @@ class Player(Base):
     k = Column(Float)   # Strikeouts
     era = Column(Float) # ERA
     whip = Column(Float) # WHIP
+    k9 = Column(Float)  # Strikeouts per 9 innings
+    hld = Column(Float) # Holds
 
     # Calculated values (populated by value engine)
     sgp = Column(Float)          # Total standings gain points

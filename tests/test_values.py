@@ -50,6 +50,8 @@ def sample_hitters(session):
             rbi=100 - (i * 0.7),
             sb=20 - (i * 0.15),
             avg=0.300 - (i * 0.001),
+            obp=0.380 - (i * 0.001),
+            slg=0.500 - (i * 0.002),
         )
         session.add(player)
         hitters.append(player)
@@ -77,6 +79,8 @@ def sample_pitchers(session):
             k=220 - (i * 2),
             era=2.80 + (i * 0.03),  # ERA increases (worse)
             whip=1.00 + (i * 0.008),  # WHIP increases (worse)
+            k9=10.0 - (i * 0.05),  # K/9 decreases
+            hld=0 if i < 40 else (25 - (i - 40) * 0.5),  # Some relievers have holds
         )
         session.add(player)
         pitchers.append(player)
@@ -1098,3 +1102,87 @@ class TestPositionalAdjustments:
         # Verify values were calculated
         players = session.query(Player).all()
         assert all(p.dollar_value is not None for p in players)
+
+
+class TestOptionalCategories:
+    """Tests for optional scoring categories (OBP, SLG, K/9, HLD)."""
+
+    def test_obp_in_sgp_breakdown(self, session, sample_hitters, sample_pitchers):
+        """Test that OBP appears in SGP breakdown when enabled."""
+        settings = LeagueSettings(
+            hitting_categories=["R", "HR", "RBI", "SB", "AVG", "OBP"],
+        )
+        calculate_all_player_values(session, settings)
+
+        hitter = sample_hitters[0]
+        assert hitter.sgp_breakdown is not None
+        assert "obp" in hitter.sgp_breakdown
+
+    def test_slg_in_sgp_breakdown(self, session, sample_hitters, sample_pitchers):
+        """Test that SLG appears in SGP breakdown when enabled."""
+        settings = LeagueSettings(
+            hitting_categories=["R", "HR", "RBI", "SB", "AVG", "SLG"],
+        )
+        calculate_all_player_values(session, settings)
+
+        hitter = sample_hitters[0]
+        assert hitter.sgp_breakdown is not None
+        assert "slg" in hitter.sgp_breakdown
+
+    def test_k9_in_sgp_breakdown(self, session, sample_hitters, sample_pitchers):
+        """Test that K/9 appears in SGP breakdown when enabled."""
+        settings = LeagueSettings(
+            pitching_categories=["W", "SV", "K", "ERA", "WHIP", "K9"],
+        )
+        calculate_all_player_values(session, settings)
+
+        pitcher = sample_pitchers[0]
+        assert pitcher.sgp_breakdown is not None
+        assert "k9" in pitcher.sgp_breakdown
+
+    def test_hld_in_sgp_breakdown(self, session, sample_hitters, sample_pitchers):
+        """Test that HLD appears in SGP breakdown when enabled."""
+        settings = LeagueSettings(
+            pitching_categories=["W", "SV", "K", "ERA", "WHIP", "HLD"],
+        )
+        calculate_all_player_values(session, settings)
+
+        pitcher = sample_pitchers[0]
+        assert pitcher.sgp_breakdown is not None
+        assert "hld" in pitcher.sgp_breakdown
+
+    def test_7x7_categories(self, session, sample_hitters, sample_pitchers):
+        """Test full 7x7 league with all optional categories."""
+        settings = LeagueSettings(
+            hitting_categories=["R", "HR", "RBI", "SB", "AVG", "OBP", "SLG"],
+            pitching_categories=["W", "SV", "K", "ERA", "WHIP", "K9", "HLD"],
+        )
+        count = calculate_all_player_values(session, settings)
+
+        assert count > 0
+        # Verify hitter has all 7 categories in breakdown
+        hitter = sample_hitters[0]
+        assert len(hitter.sgp_breakdown) == 7
+        # Verify pitcher has all 7 categories in breakdown
+        pitcher = sample_pitchers[0]
+        assert len(pitcher.sgp_breakdown) == 7
+
+    def test_top_hitter_obp_positive(self, session, sample_hitters, sample_pitchers):
+        """Test that top hitter has positive OBP SGP."""
+        settings = LeagueSettings(
+            hitting_categories=["R", "HR", "RBI", "SB", "AVG", "OBP"],
+        )
+        calculate_all_player_values(session, settings)
+
+        hitter = sample_hitters[0]  # Best hitter
+        assert hitter.sgp_breakdown["obp"] > 0
+
+    def test_top_pitcher_k9_positive(self, session, sample_hitters, sample_pitchers):
+        """Test that top pitcher has positive K/9 SGP."""
+        settings = LeagueSettings(
+            pitching_categories=["W", "SV", "K", "ERA", "WHIP", "K9"],
+        )
+        calculate_all_player_values(session, settings)
+
+        pitcher = sample_pitchers[0]  # Best pitcher
+        assert pitcher.sgp_breakdown["k9"] > 0
