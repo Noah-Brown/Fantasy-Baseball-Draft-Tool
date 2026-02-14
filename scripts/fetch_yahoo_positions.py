@@ -212,8 +212,19 @@ def main():
         sc.refresh_access_token()
 
     gm = yfa.Game(sc, "mlb")
-    lg = gm.to_league(args.league_id)
-    print(f"Connected to league: {args.league_id}")
+
+    # If user passed just a number, resolve the full league key
+    league_id = args.league_id
+    if "." not in league_id:
+        game_key = gm.game_id()
+        if not game_key:
+            print("Error: Could not determine MLB game key. Try passing the full league key (e.g., 449.l.12345).")
+            sys.exit(1)
+        league_id = f"{game_key}.l.{league_id}"
+        print(f"Resolved league key: {league_id}")
+
+    lg = gm.to_league(league_id)
+    print(f"Connected to league: {league_id}")
 
     # Fetch Yahoo players
     print("Fetching players from Yahoo...")
