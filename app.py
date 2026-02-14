@@ -211,7 +211,7 @@ def main():
         st.header("Navigation")
         page = st.radio(
             "Select Page",
-            ["Player Database", "Draft Room", "My Targets", "My Team", "All Teams", "Import Projections", "League Settings"],
+            ["Player Database", "Draft Room", "My Targets", "My Team", "All Teams", "League Settings"],
             label_visibility="collapsed",
         )
 
@@ -235,8 +235,6 @@ def main():
         show_my_team(session)
     elif page == "All Teams":
         show_all_teams(session)
-    elif page == "Import Projections":
-        show_import_page(session)
     elif page == "League Settings":
         show_settings_page(session)
 
@@ -251,7 +249,7 @@ def show_player_database(session):
     total_players = session.query(Player).count()
 
     if total_players == 0:
-        st.warning("No players in database. Go to 'Import Projections' to add players.")
+        st.warning("No players in database. Place FGDC CSV files in the data/ folder and restart the app.")
         return
 
     # Filters
@@ -2142,109 +2140,6 @@ def show_all_teams(session):
                 st.caption(f"Total Value: ${total_value:.0f} | Total Surplus: ${total_surplus:+.0f}")
 
 
-def show_import_page(session):
-    """Page for importing Steamer projections."""
-    st.header("Import Projections")
-
-    st.markdown("""
-    ### How to get Steamer projections:
-    1. Go to [Fangraphs Projections](https://www.fangraphs.com/projections)
-    2. Select **Steamer** as the projection system
-    3. Choose **Hitters** or **Pitchers**
-    4. Click **Export Data** to download CSV
-    5. Upload the files below
-    """)
-
-    # Check for existing data
-    existing_hitters = session.query(Player).filter(Player.player_type == "hitter").count()
-    existing_pitchers = session.query(Player).filter(Player.player_type == "pitcher").count()
-
-    if existing_hitters or existing_pitchers:
-        st.info(f"Current database: {existing_hitters} hitters, {existing_pitchers} pitchers")
-
-        if st.button("Clear All Players", type="secondary"):
-            clear_all_players(session)
-            st.success("All players cleared!")
-            st.rerun()
-
-    st.divider()
-
-    # File uploaders
-    col1, col2 = st.columns(2)
-
-    with col1:
-        st.subheader("Hitters")
-        hitter_file = st.file_uploader(
-            "Upload Steamer Hitters CSV",
-            type=["csv"],
-            key="hitters",
-        )
-
-        if hitter_file is not None:
-            if st.button("Import Hitters", type="primary"):
-                # Save to temp file and import
-                temp_path = Path("data/steamer_hitters.csv")
-                temp_path.parent.mkdir(exist_ok=True)
-                temp_path.write_bytes(hitter_file.getvalue())
-
-                try:
-                    count = import_hitters_csv(session, temp_path)
-                    st.success(f"Imported {count} hitters!")
-                    st.rerun()
-                except Exception as e:
-                    st.error(f"Error importing: {e}")
-
-    with col2:
-        st.subheader("Pitchers")
-        pitcher_file = st.file_uploader(
-            "Upload Steamer Pitchers CSV",
-            type=["csv"],
-            key="pitchers",
-        )
-
-        if pitcher_file is not None:
-            if st.button("Import Pitchers", type="primary"):
-                temp_path = Path("data/steamer_pitchers.csv")
-                temp_path.parent.mkdir(exist_ok=True)
-                temp_path.write_bytes(pitcher_file.getvalue())
-
-                try:
-                    count = import_pitchers_csv(session, temp_path)
-                    st.success(f"Imported {count} pitchers!")
-                    st.rerun()
-                except Exception as e:
-                    st.error(f"Error importing: {e}")
-
-    # Calculate Values section
-    st.divider()
-    st.subheader("Calculate Player Values")
-
-    # Check if we have players to calculate values for
-    total_players = session.query(Player).count()
-
-    if total_players > 0:
-        st.markdown("""
-        Calculate SGP (Standings Gain Points) and dollar values for all players.
-        This uses the standard deviation method to determine how much each player
-        contributes to your standings in each category.
-        """)
-
-        if st.button("Calculate Values", type="primary"):
-            try:
-                count = calculate_all_player_values(session, get_current_settings())
-                st.success(f"Calculated values for {count} players!")
-                st.rerun()
-            except Exception as e:
-                st.error(f"Error calculating values: {e}")
-
-        # Show summary of current values
-        players_with_values = session.query(Player).filter(Player.dollar_value.isnot(None)).count()
-        if players_with_values > 0:
-            st.info(f"{players_with_values} players currently have calculated values.")
-    else:
-        st.warning("Import players first before calculating values.")
-
-
 def show_settings_page(session):
     """Page for configuring league settings."""
     st.header("League Settings")
@@ -2446,6 +2341,30 @@ def show_settings_page(session):
                     st.write(f"{pos}: {count} players")
 
         st.caption("Higher demand = lower replacement level = less positional value boost")
+
+    # Data Management section
+    st.divider()
+    st.subheader("Data Management")
+
+    total_players = session.query(Player).count()
+    if total_players > 0:
+        players_with_values = session.query(Player).filter(Player.dollar_value.isnot(None)).count()
+        st.info(f"{total_players} players loaded ({players_with_values} with calculated values)")
+
+        if st.button("Recalculate Values", type="primary"):
+            try:
+                count = calculate_all_player_values(session, get_current_settings())
+                st.success(f"Calculated values for {count} players!")
+                st.rerun()
+            except Exception as e:
+                st.error(f"Error calculating values: {e}")
+
+        if st.button("Clear All Players", type="secondary"):
+            clear_all_players(session)
+            st.success("All players cleared!")
+            st.rerun()
+    else:
+        st.warning("No players loaded. Place FGDC CSV files in the data/ folder and restart the app.")
 
 
 if __name__ == "__main__":

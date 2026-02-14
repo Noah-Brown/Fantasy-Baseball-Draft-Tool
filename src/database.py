@@ -18,6 +18,11 @@ class Player(Base):
     positions = Column(String)  # Comma-separated list: "SS,2B"
     player_type = Column(String)  # "hitter" or "pitcher"
 
+    # External IDs for cross-platform matching
+    fangraphs_id = Column(String, nullable=True)
+    mlbam_id = Column(String, nullable=True)
+    yahoo_id = Column(String, nullable=True)
+
     # Hitter stats
     pa = Column(Float)  # Plate appearances
     ab = Column(Float)  # At bats

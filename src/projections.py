@@ -1,4 +1,4 @@
-"""Import and process Steamer projections."""
+"""Import and process FGDC (Fangraphs Depth Charts) projections."""
 
 import pandas as pd
 from pathlib import Path
@@ -7,7 +7,7 @@ from sqlalchemy.orm import Session
 from .database import Player
 
 
-# Column mappings from Fangraphs Steamer CSV to our database
+# Column mappings from Fangraphs FGDC CSV to our database
 HITTER_COLUMN_MAP = {
     "Name": "name",
     "Team": "team",
@@ -33,12 +33,14 @@ PITCHER_COLUMN_MAP = {
     "K": "k",   # Some exports use K
     "ERA": "era",
     "WHIP": "whip",
+    "BB": "bb",
+    "HLD": "hld",
 }
 
 
 def import_hitters_csv(session: Session, csv_path: str | Path) -> int:
     """
-    Import hitter projections from a Steamer CSV file.
+    Import hitter projections from a FGDC CSV file.
 
     Args:
         session: Database session
@@ -72,6 +74,8 @@ def import_hitters_csv(session: Session, csv_path: str | Path) -> int:
             team=row.get("Team", ""),
             positions=_extract_positions(row),
             player_type="hitter",
+            fangraphs_id=_safe_str(row.get("playerid") or row.get("PlayerId")),
+            mlbam_id=_safe_str(row.get("xMLBAMID") or row.get("MLBAMID")),
             pa=pa,
             ab=ab,
             h=h,
@@ -92,7 +96,7 @@ def import_hitters_csv(session: Session, csv_path: str | Path) -> int:
 
 def import_pitchers_csv(session: Session, csv_path: str | Path) -> int:
     """
-    Import pitcher projections from a Steamer CSV file.
+    Import pitcher projections from a FGDC CSV file.
 
     Args:
         session: Database session
@@ -114,17 +118,28 @@ def import_pitchers_csv(session: Session, csv_path: str | Path) -> int:
         # Use SO if K not present
         k_value = row.get("K") if "K" in df.columns else row.get("SO")
 
+        # WHIP fallback: compute from (BB + H) / IP if not in CSV
+        whip = _safe_float(row.get("WHIP"))
+        if whip is None:
+            bb = _safe_float(row.get("BB")) or 0
+            h_val = _safe_float(row.get("H")) or 0
+            ip = _safe_float(row.get("IP"))
+            if ip and ip > 0:
+                whip = (bb + h_val) / ip
+
         player = Player(
             name=row.get("Name", ""),
             team=row.get("Team", ""),
             positions=positions,
             player_type="pitcher",
+            fangraphs_id=_safe_str(row.get("playerid") or row.get("PlayerId")),
+            mlbam_id=_safe_str(row.get("xMLBAMID") or row.get("MLBAMID")),
             ip=_safe_float(row.get("IP")),
             w=_safe_float(row.get("W")),
             sv=_safe_float(row.get("SV")),
             k=_safe_float(k_value),
             era=_safe_float(row.get("ERA")),
-            whip=_safe_float(row.get("WHIP")),
+            whip=whip,
         )
         session.add(player)
         count += 1
@@ -197,6 +212,14 @@ def _safe_float(value) -> float | None:
         return float(value)
     except (ValueError, TypeError):
         return None
+
+
+def _safe_str(value) -> str | None:
+    """Safely convert a value to string, returning None for missing values."""
+    if value is None or pd.isna(value):
+        return None
+    s = str(value).strip()
+    return s if s else None
 
 
 def get_all_hitters(session: Session) -> list[Player]:
