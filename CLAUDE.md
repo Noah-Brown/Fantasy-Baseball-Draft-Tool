@@ -61,7 +61,8 @@ FGDC CSV files in `data/` -> auto-imported by `projections.py` on startup -> Yah
 - **Player types**: `"hitter"` or `"pitcher"`. Pitcher subtypes inferred from stats (SP vs RP).
 - **Budget split**: 68% hitters / 32% pitchers by default (`hitter_budget_pct`).
 - **SGP breakdown** stored as JSON dict on Player: `{"r": 1.5, "hr": 2.1, ...}`.
-- **Rate stats** (AVG, ERA, WHIP) use weighted SGP calculation (by PA or IP). ERA/WHIP are inverted (lower = better).
+- **Scoring categories**: Core 5x5 (R/HR/RBI/SB/AVG + W/SV/K/ERA/WHIP) always active. Optional categories toggled in League Settings UI: OBP, SLG (hitter rate stats), K/9 (pitcher rate stat), HLD (pitcher counting stat). Stored in `session_state.league_settings["optional_hitting_cats"]` and `["optional_pitching_cats"]`.
+- **Rate stats** (AVG, OBP, SLG) use weighted SGP calculation by AB or PA. K/9 weighted by IP (higher = better). ERA/WHIP weighted by IP (lower = better, inverted). K/9 auto-computed from `(K * 9) / IP` if not in CSV.
 - **Database sessions**: Each page function gets a fresh SQLAlchemy session. `@st.cache_resource` used for engine/session factory.
 - **Auto-load**: App checks for CSV files in `data/` folder on startup; imports automatically if DB is empty. FGDC CSV files should have "hitter"/"batter" or "pitcher" in the filename.
 - **Yahoo integration**: Position data fetched via `scripts/fetch_yahoo_positions.py` using Yahoo Fantasy API (OAuth 2.0). Credentials stored in `oauth2.json` (gitignored). Player matching uses normalized name comparison with fuzzy fallback.
