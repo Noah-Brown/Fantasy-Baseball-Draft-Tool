@@ -52,8 +52,11 @@ class TestFormatPositions:
     def test_empty_list(self):
         assert format_positions([]) == ""
 
-    def test_only_meta_positions(self):
-        assert format_positions(["Util", "BN"]) == ""
+    def test_util_only_kept_as_util(self):
+        assert format_positions(["Util"]) == "UTIL"
+
+    def test_other_meta_positions_filtered(self):
+        assert format_positions(["BN", "IL"]) == ""
 
     def test_pitcher_positions(self):
         assert format_positions(["SP", "RP"]) == "SP,RP"
@@ -90,6 +93,29 @@ class TestMatchPlayers:
         matched, unmatched = match_players(yahoo_players, [player])
         assert len(matched) == 1
         assert len(unmatched) == 0
+
+    def test_split_player_match(self, session):
+        """Test that split players (e.g., Ohtani) match by type."""
+        hitter = Player(name="Shohei Ohtani", team="LAD", player_type="hitter")
+        pitcher = Player(name="Shohei Ohtani", team="LAD", player_type="pitcher")
+        session.add_all([hitter, pitcher])
+        session.commit()
+
+        yahoo_players = {
+            "100": {"player_id": "100", "name": "Shohei Ohtani (Hitter)",
+                    "eligible_positions": ["DH", "OF"], "position_type": "B"},
+            "200": {"player_id": "200", "name": "Shohei Ohtani (Pitcher)",
+                    "eligible_positions": ["SP"], "position_type": "P"},
+        }
+
+        matched, unmatched = match_players(yahoo_players, [hitter, pitcher])
+        assert len(matched) == 2
+        assert len(unmatched) == 0
+        # Verify correct type mapping
+        hitter_match = next(m for m in matched if m[0].player_type == "hitter")
+        pitcher_match = next(m for m in matched if m[0].player_type == "pitcher")
+        assert hitter_match[1]["player_id"] == "100"
+        assert pitcher_match[1]["player_id"] == "200"
 
     def test_no_match(self, session):
         player = Player(name="Fake Player", team="XXX", player_type="hitter")

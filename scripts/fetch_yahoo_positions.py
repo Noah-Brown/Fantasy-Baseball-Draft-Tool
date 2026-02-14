@@ -66,9 +66,27 @@ def normalize_name(name: str) -> str:
     return name
 
 
+def _extract_name_type_hint(name: str) -> str | None:
+    """Extract type hint from parenthetical suffix like 'Shohei Ohtani (Hitter)'.
+
+    Returns 'hitter' or 'pitcher' if found, None otherwise.
+    """
+    if "(" in name and ")" in name:
+        hint = name[name.index("(") + 1:name.index(")")].strip().lower()
+        if hint in ("hitter", "batter"):
+            return "hitter"
+        if hint in ("pitcher",):
+            return "pitcher"
+    return None
+
+
 def match_players(yahoo_players: dict[str, dict], db_players: list[Player],
                   threshold: float = 0.85) -> list[tuple[Player, dict, float]]:
     """Match database players to Yahoo players by name.
+
+    Handles split players (e.g., Ohtani listed as both Hitter and Pitcher
+    on Yahoo) by using the parenthetical type hint to match against
+    the player_type in the database.
 
     Returns list of (db_player, yahoo_data, score) tuples.
     """
@@ -76,20 +94,31 @@ def match_players(yahoo_players: dict[str, dict], db_players: list[Player],
     unmatched_db = []
 
     # Build normalized name lookup for Yahoo players
+    # Key: (normalized_name, type_hint_or_None)
     yahoo_by_norm = {}
+    yahoo_typed = {}  # name -> {type_hint: yahoo_player} for split players
     for yp in yahoo_players.values():
         norm = normalize_name(yp["name"])
-        yahoo_by_norm[norm] = yp
+        type_hint = _extract_name_type_hint(yp["name"])
+        if type_hint:
+            yahoo_typed.setdefault(norm, {})[type_hint] = yp
+        else:
+            yahoo_by_norm[norm] = yp
 
     for player in db_players:
         norm_name = normalize_name(player.name)
+
+        # Check for type-specific match first (split players like Ohtani)
+        if norm_name in yahoo_typed and player.player_type in yahoo_typed[norm_name]:
+            matched.append((player, yahoo_typed[norm_name][player.player_type], 1.0))
+            continue
 
         # Exact normalized match
         if norm_name in yahoo_by_norm:
             matched.append((player, yahoo_by_norm[norm_name], 1.0))
             continue
 
-        # Fuzzy match
+        # Fuzzy match (only against non-typed players)
         best_score = 0
         best_yahoo = None
         for yahoo_norm, yp in yahoo_by_norm.items():
@@ -111,16 +140,22 @@ def format_positions(eligible_positions: list[str]) -> str:
 
     Filters out meta-positions like Util, BN, IL.
     """
-    positions = [p for p in eligible_positions if p not in YAHOO_META_POSITIONS]
+    # Separate Util from other meta-positions
+    non_meta = [p for p in eligible_positions if p not in YAHOO_META_POSITIONS]
+    has_util = "Util" in eligible_positions
 
     # Normalize OF positions: LF/CF/RF -> OF
     outfield = {"LF", "CF", "RF"}
-    if any(p in outfield for p in positions):
-        positions = [p for p in positions if p not in outfield]
-        if "OF" not in positions:
-            positions.append("OF")
+    if any(p in outfield for p in non_meta):
+        non_meta = [p for p in non_meta if p not in outfield]
+        if "OF" not in non_meta:
+            non_meta.append("OF")
 
-    return ",".join(positions) if positions else ""
+    # If no real positions but player has Util, keep it as UTIL
+    if not non_meta and has_util:
+        return "UTIL"
+
+    return ",".join(non_meta) if non_meta else ""
 
 
 def fetch_yahoo_players(league) -> dict[str, dict]:
@@ -193,8 +228,8 @@ def main():
     parser.add_argument(
         "--threshold",
         type=float,
-        default=0.85,
-        help="Fuzzy match threshold 0-1 (default: 0.85)",
+        default=0.90,
+        help="Fuzzy match threshold 0-1 (default: 0.90)",
     )
     args = parser.parse_args()
 
@@ -246,6 +281,54 @@ def main():
     # Match players
     print(f"Matching players (threshold: {args.threshold})...")
     matched, unmatched_db = match_players(yahoo_players, db_players, args.threshold)
+
+    # Second pass: search Yahoo by name for unmatched players
+    if unmatched_db:
+        print(f"Searching Yahoo for {len(unmatched_db)} unmatched players...")
+        still_unmatched = []
+        for player in unmatched_db:
+            try:
+                results = lg.player_details(player.name)
+                if not results:
+                    still_unmatched.append(player)
+                    continue
+
+                # Find best match from search results using type hint
+                best = None
+                for r in results:
+                    name = r.get("name", "")
+                    if isinstance(name, dict):
+                        name = name.get("full", "")
+                    type_hint = _extract_name_type_hint(name)
+                    norm = normalize_name(name)
+                    player_norm = normalize_name(player.name)
+
+                    # Type-specific match for split players
+                    if type_hint and type_hint == player.player_type and norm == player_norm:
+                        best = r
+                        break
+                    # Regular match
+                    if not type_hint and norm == player_norm:
+                        best = r
+                        break
+
+                if best:
+                    # Extract eligible positions from search result format
+                    positions = best.get("eligible_positions", [])
+                    if positions and isinstance(positions[0], dict):
+                        positions = [p["position"] for p in positions]
+                    yahoo_data = {
+                        "player_id": str(best["player_id"]),
+                        "name": best["name"] if isinstance(best["name"], str) else best["name"].get("full", ""),
+                        "eligible_positions": positions,
+                        "position_type": best.get("position_type", ""),
+                    }
+                    matched.append((player, yahoo_data, 1.0))
+                else:
+                    still_unmatched.append(player)
+            except Exception:
+                still_unmatched.append(player)
+        unmatched_db = still_unmatched
 
     # Report results
     print(f"\nResults:")
