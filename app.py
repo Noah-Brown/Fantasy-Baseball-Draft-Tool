@@ -184,6 +184,7 @@ def get_current_settings() -> LeagueSettings:
         st.session_state.league_settings["rounds_per_team"] = DEFAULT_SETTINGS.rounds_per_team
 
     # Build category lists from core + optional
+    state = st.session_state.league_settings
     hitting_categories = ["R", "HR", "RBI", "SB", "AVG"] + state.get("optional_hitting_cats", [])
     pitching_categories = ["W", "SV", "K", "ERA", "WHIP"] + state.get("optional_pitching_cats", [])
 
@@ -216,7 +217,7 @@ def main():
         st.header("Navigation")
         page = st.radio(
             "Select Page",
-            ["Player Database", "Draft Room", "My Targets", "My Team", "All Teams", "League Settings"],
+            ["Home", "Player Database", "Draft Room", "My Targets", "My Team", "All Teams", "League Settings"],
             label_visibility="collapsed",
         )
 
@@ -230,7 +231,9 @@ def main():
         st.metric("Pitchers", pitcher_count)
 
     # Page routing
-    if page == "Player Database":
+    if page == "Home":
+        show_home_page(session)
+    elif page == "Player Database":
         show_player_database(session)
     elif page == "Draft Room":
         show_draft_room(session)
@@ -244,6 +247,71 @@ def main():
         show_settings_page(session)
 
     session.close()
+
+
+def show_home_page(session):
+    """Display the welcome/home page with overview and status dashboard."""
+    st.header("Welcome to Fantasy Baseball Draft Tool")
+
+    st.markdown(
+        "A draft assistant powered by **SGP (Standings Gain Points)** valuations "
+        "from FanGraphs Depth Charts (FGDC) projections. Supports both **auction** "
+        "and **snake** draft formats."
+    )
+
+    st.divider()
+
+    # Status dashboard
+    st.subheader("Dashboard")
+
+    hitter_count = session.query(Player).filter(Player.player_type == "hitter").count()
+    pitcher_count = session.query(Player).filter(Player.player_type == "pitcher").count()
+    drafted_count = session.query(Player).filter(Player.is_drafted == True).count()  # noqa: E712
+    team_count = session.query(Team).count()
+    target_count = session.query(TargetPlayer).count()
+
+    draft_state = session.query(DraftState).first()
+    if draft_state and draft_state.is_active:
+        draft_status = f"{drafted_count} picks made"
+    elif drafted_count > 0:
+        draft_status = f"Complete ({drafted_count} picks)"
+    else:
+        draft_status = "Not started"
+
+    col1, col2, col3, col4 = st.columns(4)
+    col1.metric("Hitters", hitter_count)
+    col2.metric("Pitchers", pitcher_count)
+    col3.metric("Draft", draft_status)
+    col4.metric("Targets", target_count)
+
+    st.divider()
+
+    # Quick start guide
+    st.subheader("Getting Started")
+
+    st.markdown("""
+1. **League Settings** — Configure your league size, budget, roster spots, and scoring categories
+2. **Player Database** — Browse player projections and SGP-based dollar values
+3. **My Targets** — Build a watchlist of players you want to draft with max bid prices
+4. **Draft Room** — Run your draft with live value updates as players come off the board
+""")
+
+    st.divider()
+
+    # Page guide
+    st.subheader("Pages")
+
+    pages = {
+        "Player Database": "Browse all players with projections, values, and rankings. Filter by position, search by name, and sort by any stat.",
+        "Draft Room": "The main draft interface. Draft players, track spending, and see real-time value adjustments as the player pool shrinks.",
+        "My Targets": "Build a watchlist of players you're targeting. Set max bid prices and notes to stay organized during the draft.",
+        "My Team": "View your drafted roster, positional coverage, and category strengths/weaknesses.",
+        "All Teams": "See every team's roster and compare across the league.",
+        "League Settings": "Configure league parameters: team count, budget, roster spots, scoring categories, and draft type.",
+    }
+
+    for name, desc in pages.items():
+        st.markdown(f"**{name}** — {desc}")
 
 
 def show_player_database(session):
