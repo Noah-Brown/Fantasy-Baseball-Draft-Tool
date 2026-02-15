@@ -183,13 +183,19 @@ def get_current_settings() -> LeagueSettings:
     if "rounds_per_team" not in st.session_state.league_settings:
         st.session_state.league_settings["rounds_per_team"] = DEFAULT_SETTINGS.rounds_per_team
 
-    # Build LeagueSettings from session state
+    # Build category lists from core + optional
     state = st.session_state.league_settings
+    hitting_categories = ["R", "HR", "RBI", "SB", "AVG"] + state.get("optional_hitting_cats", [])
+    pitching_categories = ["W", "SV", "K", "ERA", "WHIP"] + state.get("optional_pitching_cats", [])
+
+    # Build LeagueSettings from session state
     return LeagueSettings(
         num_teams=state["num_teams"],
         budget_per_team=state["budget_per_team"],
         min_bid=state["min_bid"],
         roster_spots=state["roster_spots"],
+        hitting_categories=hitting_categories,
+        pitching_categories=pitching_categories,
         use_positional_adjustments=state.get("use_positional_adjustments", True),
         draft_type=state.get("draft_type", "auction"),
         rounds_per_team=state.get("rounds_per_team", 23),
@@ -211,7 +217,7 @@ def main():
         st.header("Navigation")
         page = st.radio(
             "Select Page",
-            ["Player Database", "Draft Room", "My Targets", "My Team", "All Teams", "Import Projections", "League Settings"],
+            ["Home", "Player Database", "Draft Room", "My Targets", "My Team", "All Teams", "League Settings"],
             label_visibility="collapsed",
         )
 
@@ -225,7 +231,9 @@ def main():
         st.metric("Pitchers", pitcher_count)
 
     # Page routing
-    if page == "Player Database":
+    if page == "Home":
+        show_home_page(session)
+    elif page == "Player Database":
         show_player_database(session)
     elif page == "Draft Room":
         show_draft_room(session)
@@ -235,12 +243,75 @@ def main():
         show_my_team(session)
     elif page == "All Teams":
         show_all_teams(session)
-    elif page == "Import Projections":
-        show_import_page(session)
     elif page == "League Settings":
         show_settings_page(session)
 
     session.close()
+
+
+def show_home_page(session):
+    """Display the welcome/home page with overview and status dashboard."""
+    st.header("Welcome to Fantasy Baseball Draft Tool")
+
+    st.markdown(
+        "A draft assistant powered by **SGP (Standings Gain Points)** valuations "
+        "from FanGraphs Depth Charts (FGDC) projections. Supports both **auction** "
+        "and **snake** draft formats."
+    )
+
+    st.divider()
+
+    # Status dashboard
+    st.subheader("Dashboard")
+
+    hitter_count = session.query(Player).filter(Player.player_type == "hitter").count()
+    pitcher_count = session.query(Player).filter(Player.player_type == "pitcher").count()
+    drafted_count = session.query(Player).filter(Player.is_drafted == True).count()  # noqa: E712
+    team_count = session.query(Team).count()
+    target_count = session.query(TargetPlayer).count()
+
+    draft_state = session.query(DraftState).first()
+    if draft_state and draft_state.is_active:
+        draft_status = f"{drafted_count} picks made"
+    elif drafted_count > 0:
+        draft_status = f"Complete ({drafted_count} picks)"
+    else:
+        draft_status = "Not started"
+
+    col1, col2, col3, col4 = st.columns(4)
+    col1.metric("Hitters", hitter_count)
+    col2.metric("Pitchers", pitcher_count)
+    col3.metric("Draft", draft_status)
+    col4.metric("Targets", target_count)
+
+    st.divider()
+
+    # Quick start guide
+    st.subheader("Getting Started")
+
+    st.markdown("""
+1. **League Settings** — Configure your league size, budget, roster spots, and scoring categories
+2. **Player Database** — Browse player projections and SGP-based dollar values
+3. **My Targets** — Build a watchlist of players you want to draft with max bid prices
+4. **Draft Room** — Run your draft with live value updates as players come off the board
+""")
+
+    st.divider()
+
+    # Page guide
+    st.subheader("Pages")
+
+    pages = {
+        "Player Database": "Browse all players with projections, values, and rankings. Filter by position, search by name, and sort by any stat.",
+        "Draft Room": "The main draft interface. Draft players, track spending, and see real-time value adjustments as the player pool shrinks.",
+        "My Targets": "Build a watchlist of players you're targeting. Set max bid prices and notes to stay organized during the draft.",
+        "My Team": "View your drafted roster, positional coverage, and category strengths/weaknesses.",
+        "All Teams": "See every team's roster and compare across the league.",
+        "League Settings": "Configure league parameters: team count, budget, roster spots, scoring categories, and draft type.",
+    }
+
+    for name, desc in pages.items():
+        st.markdown(f"**{name}** — {desc}")
 
 
 def show_player_database(session):
@@ -251,7 +322,7 @@ def show_player_database(session):
     total_players = session.query(Player).count()
 
     if total_players == 0:
-        st.warning("No players in database. Go to 'Import Projections' to add players.")
+        st.warning("No players in database. Place FGDC CSV files in the data/ folder and restart the app.")
         return
 
     # Filters
@@ -2142,109 +2213,6 @@ def show_all_teams(session):
                 st.caption(f"Total Value: ${total_value:.0f} | Total Surplus: ${total_surplus:+.0f}")
 
 
-def show_import_page(session):
-    """Page for importing Steamer projections."""
-    st.header("Import Projections")
-
-    st.markdown("""
-    ### How to get Steamer projections:
-    1. Go to [Fangraphs Projections](https://www.fangraphs.com/projections)
-    2. Select **Steamer** as the projection system
-    3. Choose **Hitters** or **Pitchers**
-    4. Click **Export Data** to download CSV
-    5. Upload the files below
-    """)
-
-    # Check for existing data
-    existing_hitters = session.query(Player).filter(Player.player_type == "hitter").count()
-    existing_pitchers = session.query(Player).filter(Player.player_type == "pitcher").count()
-
-    if existing_hitters or existing_pitchers:
-        st.info(f"Current database: {existing_hitters} hitters, {existing_pitchers} pitchers")
-
-        if st.button("Clear All Players", type="secondary"):
-            clear_all_players(session)
-            st.success("All players cleared!")
-            st.rerun()
-
-    st.divider()
-
-    # File uploaders
-    col1, col2 = st.columns(2)
-
-    with col1:
-        st.subheader("Hitters")
-        hitter_file = st.file_uploader(
-            "Upload Steamer Hitters CSV",
-            type=["csv"],
-            key="hitters",
-        )
-
-        if hitter_file is not None:
-            if st.button("Import Hitters", type="primary"):
-                # Save to temp file and import
-                temp_path = Path("data/steamer_hitters.csv")
-                temp_path.parent.mkdir(exist_ok=True)
-                temp_path.write_bytes(hitter_file.getvalue())
-
-                try:
-                    count = import_hitters_csv(session, temp_path)
-                    st.success(f"Imported {count} hitters!")
-                    st.rerun()
-                except Exception as e:
-                    st.error(f"Error importing: {e}")
-
-    with col2:
-        st.subheader("Pitchers")
-        pitcher_file = st.file_uploader(
-            "Upload Steamer Pitchers CSV",
-            type=["csv"],
-            key="pitchers",
-        )
-
-        if pitcher_file is not None:
-            if st.button("Import Pitchers", type="primary"):
-                temp_path = Path("data/steamer_pitchers.csv")
-                temp_path.parent.mkdir(exist_ok=True)
-                temp_path.write_bytes(pitcher_file.getvalue())
-
-                try:
-                    count = import_pitchers_csv(session, temp_path)
-                    st.success(f"Imported {count} pitchers!")
-                    st.rerun()
-                except Exception as e:
-                    st.error(f"Error importing: {e}")
-
-    # Calculate Values section
-    st.divider()
-    st.subheader("Calculate Player Values")
-
-    # Check if we have players to calculate values for
-    total_players = session.query(Player).count()
-
-    if total_players > 0:
-        st.markdown("""
-        Calculate SGP (Standings Gain Points) and dollar values for all players.
-        This uses the standard deviation method to determine how much each player
-        contributes to your standings in each category.
-        """)
-
-        if st.button("Calculate Values", type="primary"):
-            try:
-                count = calculate_all_player_values(session, get_current_settings())
-                st.success(f"Calculated values for {count} players!")
-                st.rerun()
-            except Exception as e:
-                st.error(f"Error calculating values: {e}")
-
-        # Show summary of current values
-        players_with_values = session.query(Player).filter(Player.dollar_value.isnot(None)).count()
-        if players_with_values > 0:
-            st.info(f"{players_with_values} players currently have calculated values.")
-    else:
-        st.warning("Import players first before calculating values.")
-
-
 def show_settings_page(session):
     """Page for configuring league settings."""
     st.header("League Settings")
@@ -2318,11 +2286,35 @@ def show_settings_page(session):
 
     with col2:
         st.subheader("Scoring Categories")
-        st.markdown("**Hitting (5x5)**")
-        st.text(", ".join(settings.hitting_categories))
+        st.markdown("**Hitting**")
+        st.text("R, HR, RBI, SB, AVG")
 
-        st.markdown("**Pitching (5x5)**")
-        st.text(", ".join(settings.pitching_categories))
+        opt_hitting = st.session_state.league_settings.get("optional_hitting_cats", [])
+        obp_on = st.checkbox("OBP", value="OBP" in opt_hitting, key="cat_obp")
+        slg_on = st.checkbox("SLG", value="SLG" in opt_hitting, key="cat_slg")
+        new_opt_hitting = []
+        if obp_on:
+            new_opt_hitting.append("OBP")
+        if slg_on:
+            new_opt_hitting.append("SLG")
+        st.session_state.league_settings["optional_hitting_cats"] = new_opt_hitting
+
+        st.markdown("**Pitching**")
+        st.text("W, SV, K, ERA, WHIP")
+
+        opt_pitching = st.session_state.league_settings.get("optional_pitching_cats", [])
+        k9_on = st.checkbox("K/9", value="K9" in opt_pitching, key="cat_k9")
+        hld_on = st.checkbox("HLD", value="HLD" in opt_pitching, key="cat_hld")
+        new_opt_pitching = []
+        if k9_on:
+            new_opt_pitching.append("K9")
+        if hld_on:
+            new_opt_pitching.append("HLD")
+        st.session_state.league_settings["optional_pitching_cats"] = new_opt_pitching
+
+        all_hitting = ["R", "HR", "RBI", "SB", "AVG"] + new_opt_hitting
+        all_pitching = ["W", "SV", "K", "ERA", "WHIP"] + new_opt_pitching
+        st.caption(f"Active: {len(all_hitting)}x{len(all_pitching)}")
 
         st.divider()
 
@@ -2401,6 +2393,8 @@ def show_settings_page(session):
             "use_positional_adjustments": DEFAULT_SETTINGS.use_positional_adjustments,
             "draft_type": DEFAULT_SETTINGS.draft_type,
             "rounds_per_team": DEFAULT_SETTINGS.rounds_per_team,
+            "optional_hitting_cats": [],
+            "optional_pitching_cats": [],
         }
         st.rerun()
 
@@ -2446,6 +2440,30 @@ def show_settings_page(session):
                     st.write(f"{pos}: {count} players")
 
         st.caption("Higher demand = lower replacement level = less positional value boost")
+
+    # Data Management section
+    st.divider()
+    st.subheader("Data Management")
+
+    total_players = session.query(Player).count()
+    if total_players > 0:
+        players_with_values = session.query(Player).filter(Player.dollar_value.isnot(None)).count()
+        st.info(f"{total_players} players loaded ({players_with_values} with calculated values)")
+
+        if st.button("Recalculate Values", type="primary"):
+            try:
+                count = calculate_all_player_values(session, get_current_settings())
+                st.success(f"Calculated values for {count} players!")
+                st.rerun()
+            except Exception as e:
+                st.error(f"Error calculating values: {e}")
+
+        if st.button("Clear All Players", type="secondary"):
+            clear_all_players(session)
+            st.success("All players cleared!")
+            st.rerun()
+    else:
+        st.warning("No players loaded. Place FGDC CSV files in the data/ folder and restart the app.")
 
 
 if __name__ == "__main__":

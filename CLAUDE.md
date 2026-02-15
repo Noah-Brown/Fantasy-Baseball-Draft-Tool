@@ -22,13 +22,17 @@ pip install -r requirements.txt
 
 # Docker deployment
 docker-compose up -d
+
+# Fetch Yahoo position data (run after importing projections)
+python scripts/fetch_yahoo_positions.py --league-id 388.l.XXXXX
+python scripts/fetch_yahoo_positions.py --league-id 388.l.XXXXX --dry-run  # preview only
 ```
 
 There is no linter, formatter, or type checker configured for this project.
 
 ## Architecture
 
-Streamlit single-page app (`app.py`) for managing fantasy baseball auction and snake drafts using Fangraphs Steamer projections. Python 3.10+, SQLAlchemy 2.0+, SQLite (`draft.db`), Pandas, Altair.
+Streamlit single-page app (`app.py`) for managing fantasy baseball auction and snake drafts using Fangraphs Depth Charts (FGDC) projections. Python 3.10+, SQLAlchemy 2.0+, SQLite (`draft.db`), Pandas, Altair.
 
 ### Core Modules (`src/`)
 
@@ -36,16 +40,20 @@ Streamlit single-page app (`app.py`) for managing fantasy baseball auction and s
 - **`values.py`** - SGP (Standings Gain Points) valuation engine. Two modes: positional replacement level (default, FanGraphs methodology) and pool-based. Converts raw projections into dollar values relative to replacement level.
 - **`draft.py`** - Draft lifecycle: `initialize_draft()`, `draft_player()`, `undo_last_pick()`. Handles both auction (price-based) and snake (round-based). Auto-recalculates remaining player values after each pick.
 - **`snake.py`** - Serpentine draft order generation and pick tracking.
-- **`projections.py`** - Fangraphs Steamer CSV import with column mapping fallbacks and stat estimation (e.g., AB from PA).
+- **`projections.py`** - Fangraphs FGDC CSV import with column mapping fallbacks and stat estimation (e.g., AB from PA). Stores Fangraphs and MLBAM IDs for cross-platform matching.
 - **`settings.py`** - `LeagueSettings` dataclass with computed properties for budget splits, roster totals, and positional demand.
 - **`needs.py`** - Team positional roster state (greedy assignment to most restrictive position first) and category weakness analysis.
 - **`targets.py`** - Target list CRUD operations.
 - **`positions.py`** - Position eligibility, composite position expansion (CI -> 1B/3B, MI -> 2B/SS).
 - **`components.py`** - UI keyboard shortcut injection.
 
+### Scripts (`scripts/`)
+
+- **`fetch_yahoo_positions.py`** - CLI script to fetch player position eligibility from Yahoo Fantasy API and match to database players by name. Requires `oauth2.json` with Yahoo API credentials. Run after importing FGDC projections.
+
 ### Data Flow
 
-CSV import (`projections.py`) -> Player records in SQLite -> SGP calculation (`values.py`) -> Dollar values stored on Player -> Draft operations (`draft.py`) update DraftPick/Team/Player state -> Values recalculated for remaining players.
+FGDC CSV files in `data/` -> auto-imported by `projections.py` on startup -> Yahoo positions fetched via `scripts/fetch_yahoo_positions.py` -> SGP calculation (`values.py`) -> Dollar values stored on Player -> Draft operations (`draft.py`) update DraftPick/Team/Player state -> Values recalculated for remaining players.
 
 ### Key Conventions
 
@@ -53,9 +61,11 @@ CSV import (`projections.py`) -> Player records in SQLite -> SGP calculation (`v
 - **Player types**: `"hitter"` or `"pitcher"`. Pitcher subtypes inferred from stats (SP vs RP).
 - **Budget split**: 68% hitters / 32% pitchers by default (`hitter_budget_pct`).
 - **SGP breakdown** stored as JSON dict on Player: `{"r": 1.5, "hr": 2.1, ...}`.
-- **Rate stats** (AVG, ERA, WHIP) use weighted SGP calculation (by PA or IP). ERA/WHIP are inverted (lower = better).
+- **Scoring categories**: Core 5x5 (R/HR/RBI/SB/AVG + W/SV/K/ERA/WHIP) always active. Optional categories toggled in League Settings UI: OBP, SLG (hitter rate stats), K/9 (pitcher rate stat), HLD (pitcher counting stat). Stored in `session_state.league_settings["optional_hitting_cats"]` and `["optional_pitching_cats"]`.
+- **Rate stats** (AVG, OBP, SLG) use weighted SGP calculation by AB or PA. K/9 weighted by IP (higher = better). ERA/WHIP weighted by IP (lower = better, inverted). K/9 auto-computed from `(K * 9) / IP` if not in CSV.
 - **Database sessions**: Each page function gets a fresh SQLAlchemy session. `@st.cache_resource` used for engine/session factory.
-- **Auto-load**: App checks for CSV files in `data/` folder on startup; imports automatically if DB is empty.
+- **Auto-load**: App checks for CSV files in `data/` folder on startup; imports automatically if DB is empty. FGDC CSV files should have "hitter"/"batter" or "pitcher" in the filename.
+- **Yahoo integration**: Position data fetched via `scripts/fetch_yahoo_positions.py` using Yahoo Fantasy API (OAuth 2.0). Credentials stored in `oauth2.json` (gitignored). Player matching uses normalized name comparison with fuzzy fallback.
 - **Authentication**: HTTP Basic Auth at nginx level only, not in the application. Single-league shared tool, not multi-tenant. The `.htpasswd` file lives in the **project root** (mounted read-only into the nginx container); after changes, run `docker-compose restart nginx`.
 
 ### Testing

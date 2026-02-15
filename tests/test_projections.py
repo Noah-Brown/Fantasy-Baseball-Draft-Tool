@@ -10,6 +10,7 @@ from src.projections import (
     get_available_players,
     clear_all_players,
     _safe_float,
+    _safe_str,
     _extract_positions,
     _extract_pitcher_positions,
 )
@@ -102,6 +103,28 @@ class TestExtractPitcherPositions:
         assert _extract_pitcher_positions(row) == "SP"
 
 
+class TestSafeStr:
+    """Tests for _safe_str helper function."""
+
+    def test_valid_string(self):
+        assert _safe_str("abc") == "abc"
+
+    def test_integer_value(self):
+        assert _safe_str(12345) == "12345"
+
+    def test_none_value(self):
+        assert _safe_str(None) is None
+
+    def test_nan_value(self):
+        assert _safe_str(float("nan")) is None
+
+    def test_empty_string(self):
+        assert _safe_str("") is None
+
+    def test_whitespace_string(self):
+        assert _safe_str("  ") is None
+
+
 class TestImportHittersCsv:
     """Tests for import_hitters_csv function."""
 
@@ -159,6 +182,30 @@ Test Player,NYY,,30,"""
         assert player.avg is None
 
 
+    def test_import_hitters_stores_fangraphs_id(self, session, tmp_csv_path):
+        """Test that Fangraphs player IDs are stored from FGDC CSV."""
+        csv_content = """Name,Team,PA,HR,AVG,playerid,xMLBAMID
+Juan Soto,NYY,700,40,0.300,20123,665742"""
+        csv_path = tmp_csv_path("hitters.csv", csv_content)
+
+        import_hitters_csv(session, csv_path)
+
+        player = get_all_hitters(session)[0]
+        assert player.fangraphs_id == "20123"
+        assert player.mlbam_id == "665742"
+
+    def test_import_hitters_no_position(self, session, tmp_csv_path):
+        """Test importing hitters without position column (FGDC default)."""
+        csv_content = """Name,Team,PA,HR,AVG
+Test Player,NYY,600,30,0.280"""
+        csv_path = tmp_csv_path("hitters.csv", csv_content)
+
+        import_hitters_csv(session, csv_path)
+
+        player = get_all_hitters(session)[0]
+        assert player.positions == ""
+
+
 class TestImportPitchersCsv:
     """Tests for import_pitchers_csv function."""
 
@@ -201,6 +248,63 @@ Reliever,LAD,60,3,35,70,2.50,0.95,0,60"""
 
         assert "SP" in starter.positions
         assert "RP" in reliever.positions
+
+
+    def test_import_pitchers_whip_fallback(self, session, tmp_csv_path):
+        """Test WHIP is computed from BB and H when missing."""
+        csv_content = """Name,Team,IP,W,SV,SO,ERA,BB,H
+Test Pitcher,NYY,200,15,0,250,3.00,50,160"""
+        csv_path = tmp_csv_path("pitchers.csv", csv_content)
+
+        import_pitchers_csv(session, csv_path)
+
+        pitcher = get_all_pitchers(session)[0]
+        assert pitcher.whip == pytest.approx((50 + 160) / 200)
+
+    def test_import_pitchers_stores_fangraphs_id(self, session, tmp_csv_path):
+        """Test that Fangraphs player IDs are stored from FGDC CSV."""
+        csv_content = """Name,Team,IP,W,SV,SO,ERA,WHIP,playerid,xMLBAMID
+Gerrit Cole,NYY,200,15,0,250,3.00,1.00,13125,543037"""
+        csv_path = tmp_csv_path("pitchers.csv", csv_content)
+
+        import_pitchers_csv(session, csv_path)
+
+        pitcher = get_all_pitchers(session)[0]
+        assert pitcher.fangraphs_id == "13125"
+        assert pitcher.mlbam_id == "543037"
+
+    def test_import_pitchers_k9_from_csv(self, session, tmp_csv_path):
+        """Test that K/9 is imported directly from CSV."""
+        csv_content = """Name,Team,IP,W,SV,SO,ERA,WHIP,K/9
+Test Pitcher,NYY,200,15,0,250,3.00,1.00,11.25"""
+        csv_path = tmp_csv_path("pitchers.csv", csv_content)
+
+        import_pitchers_csv(session, csv_path)
+
+        pitcher = get_all_pitchers(session)[0]
+        assert pitcher.k9 == 11.25
+
+    def test_import_pitchers_k9_fallback(self, session, tmp_csv_path):
+        """Test that K/9 is computed from K and IP when not in CSV."""
+        csv_content = """Name,Team,IP,W,SV,SO,ERA,WHIP
+Test Pitcher,NYY,200,15,0,200,3.00,1.00"""
+        csv_path = tmp_csv_path("pitchers.csv", csv_content)
+
+        import_pitchers_csv(session, csv_path)
+
+        pitcher = get_all_pitchers(session)[0]
+        assert pitcher.k9 == pytest.approx(9.0)  # (200 * 9) / 200
+
+    def test_import_pitchers_hld(self, session, tmp_csv_path):
+        """Test that HLD is imported from CSV."""
+        csv_content = """Name,Team,IP,W,SV,SO,ERA,WHIP,HLD
+Test Reliever,NYY,60,3,0,70,2.50,0.95,25"""
+        csv_path = tmp_csv_path("pitchers.csv", csv_content)
+
+        import_pitchers_csv(session, csv_path)
+
+        pitcher = get_all_pitchers(session)[0]
+        assert pitcher.hld == 25.0
 
 
 class TestPlayerQueries:

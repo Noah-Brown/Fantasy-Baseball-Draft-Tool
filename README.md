@@ -1,11 +1,12 @@
-# Fantasy Baseball Auction Draft Tool
+# Fantasy Baseball Draft Tool
 
-A Streamlit-based application for managing fantasy baseball auction drafts with Steamer projections.
+A Streamlit-based application for managing fantasy baseball auction and snake drafts using Fangraphs Depth Charts (FGDC) projections with Yahoo Fantasy position eligibility.
 
 ## Features
 
 - **Player Database**: Browse and search hitters and pitchers with projected stats
-- **Steamer Projections**: Import projections directly from Fangraphs CSV exports
+- **FGDC Projections**: Auto-imports Fangraphs Depth Charts projections from CSV files
+- **Yahoo Positions**: Fetches position eligibility from Yahoo Fantasy Baseball API
 - **League Settings**: Configure teams, budgets, roster spots, and scoring categories
 - **5x5 Scoring**: Standard rotisserie categories (R, HR, RBI, SB, AVG / W, SV, K, ERA, WHIP)
 - **Draft Notes**: Add persistent free-text notes to any player (e.g., injury concerns, sleeper picks, avoid)
@@ -29,6 +30,56 @@ A Streamlit-based application for managing fantasy baseball auction drafts with 
    pip install -r requirements.txt
    ```
 
+## Setup
+
+### 1. Download FGDC Projections
+
+1. Go to [Fangraphs Projections](https://www.fangraphs.com/projections) (requires Fangraphs subscription)
+2. Select **Depth Charts** as the projection system
+3. Download hitter and pitcher CSV exports
+4. Rename the files so they contain "hitter" or "batter" and "pitcher" in the filename (e.g., `fgdc_hitters.csv`, `fgdc_pitchers.csv`)
+5. Place them in the `data/` folder
+
+### 2. Set Up Yahoo Fantasy API (for position data)
+
+The FGDC projections don't include position eligibility, so we pull that from Yahoo Fantasy.
+
+1. Go to [Yahoo Developer Apps](https://developer.yahoo.com/apps/) and sign in
+2. Click **Create an App**
+3. Fill in the form:
+   - **Application Name**: anything you like (e.g., "Fantasy Draft Tool")
+   - **Application Type**: **Installed Application**
+   - **Homepage URL**: `https://localhost`
+   - **Redirect URI(s)**: leave blank (or `oob` if required)
+   - **API Permissions**: check **Fantasy Sports** with **Read** access
+4. Click **Create App**
+5. Copy your **Client ID (Consumer Key)** and **Client Secret (Consumer Secret)**
+6. Create `oauth2.json` in the project root:
+   ```json
+   {
+     "consumer_key": "YOUR_CLIENT_ID_HERE",
+     "consumer_secret": "YOUR_CLIENT_SECRET_HERE"
+   }
+   ```
+
+This file is gitignored and will never be committed.
+
+### 3. Fetch Yahoo Position Data
+
+After placing your FGDC CSVs in `data/` and starting the app once (to import projections), run:
+
+```bash
+# Preview matches without writing to database
+python scripts/fetch_yahoo_positions.py --league-id 388.l.XXXXX --dry-run
+
+# Write position data to database
+python scripts/fetch_yahoo_positions.py --league-id 388.l.XXXXX
+```
+
+Find your league ID in your Yahoo Fantasy league URL (e.g., `https://baseball.fantasysports.yahoo.com/b2/XXXXX`). The full league key format is `{game_key}.l.{league_id}`.
+
+On the first run, a browser window will open asking you to authorize the app. After approving, the tokens are saved to `oauth2.json` for future use.
+
 ## Usage
 
 1. Start the application:
@@ -36,33 +87,40 @@ A Streamlit-based application for managing fantasy baseball auction drafts with 
    streamlit run app.py
    ```
 
-2. Import projections:
-   - Go to [Fangraphs Projections](https://www.fangraphs.com/projections)
-   - Select **Steamer** as the projection system
-   - Download hitter and pitcher CSV files (Requires Fangraphs subscription) 
-   - Upload them via the "Import Projections" page
+2. The app auto-imports any FGDC CSV files in `data/` on first startup.
 
-3. Browse players and configure league settings as needed.
+3. Browse players, configure league settings, and manage your draft.
 
 ## Project Structure
 
 ```
 Fantasy-Baseball-Draft-Tool/
-├── app.py              # Main Streamlit application
+├── app.py                  # Main Streamlit application
 ├── src/
-│   ├── database.py     # SQLAlchemy models (Player, Team, DraftPick)
-│   ├── projections.py  # CSV import and player queries
-│   └── settings.py     # League configuration
-├── requirements.txt    # Python dependencies
-└── data/               # Uploaded projection files (created on import)
+│   ├── database.py         # SQLAlchemy models (Player, Team, DraftPick)
+│   ├── projections.py      # FGDC CSV import and player queries
+│   ├── values.py           # SGP valuation engine
+│   ├── draft.py            # Draft lifecycle management
+│   ├── settings.py         # League configuration
+│   ├── needs.py            # Team roster needs analysis
+│   ├── positions.py        # Position eligibility utilities
+│   └── targets.py          # Target list CRUD
+├── scripts/
+│   └── fetch_yahoo_positions.py  # Yahoo API position fetch CLI
+├── tests/                  # Test suite
+├── requirements.txt        # Python dependencies
+├── oauth2.json             # Yahoo API credentials (gitignored)
+└── data/                   # FGDC projection CSV files
 ```
 
 ## Requirements
 
 - Python 3.10+
-- streamlit >= 1.28.0
+- streamlit >= 1.37.0
 - pandas >= 2.0.0
 - sqlalchemy >= 2.0.0
+- yahoo_oauth >= 1.1.0
+- yahoo_fantasy_api >= 2.12.0
 
 ## License
 

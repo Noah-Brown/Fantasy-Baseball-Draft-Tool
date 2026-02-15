@@ -18,6 +18,11 @@ class Player(Base):
     positions = Column(String)  # Comma-separated list: "SS,2B"
     player_type = Column(String)  # "hitter" or "pitcher"
 
+    # External IDs for cross-platform matching
+    fangraphs_id = Column(String, nullable=True)
+    mlbam_id = Column(String, nullable=True)
+    yahoo_id = Column(String, nullable=True)
+
     # Hitter stats
     pa = Column(Float)  # Plate appearances
     ab = Column(Float)  # At bats
@@ -37,6 +42,8 @@ class Player(Base):
     k = Column(Float)   # Strikeouts
     era = Column(Float) # ERA
     whip = Column(Float) # WHIP
+    k9 = Column(Float)  # Strikeouts per 9 innings
+    hld = Column(Float) # Holds
 
     # Calculated values (populated by value engine)
     sgp = Column(Float)          # Total standings gain points

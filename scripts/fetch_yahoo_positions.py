@@ -1,0 +1,376 @@
+#!/usr/bin/env python3
+"""Fetch player position eligibility from Yahoo Fantasy Baseball API.
+
+Usage:
+    python scripts/fetch_yahoo_positions.py --league-id 388.l.12345
+
+First-time setup:
+    1. Register an app at https://developer.yahoo.com/apps/
+    2. Select "Installed Application" type
+    3. Request "Read" access to "Fantasy Sports"
+    4. Create oauth2.json in project root with:
+       {"consumer_key": "YOUR_KEY", "consumer_secret": "YOUR_SECRET"}
+    5. On first run, a browser window opens for Yahoo authorization
+"""
+
+import argparse
+import sys
+import unicodedata
+from difflib import SequenceMatcher
+from pathlib import Path
+
+# Add project root to path so we can import src modules
+PROJECT_ROOT = Path(__file__).resolve().parent.parent
+sys.path.insert(0, str(PROJECT_ROOT))
+
+from yahoo_oauth import OAuth2
+import yahoo_fantasy_api as yfa
+
+from src.database import Player, get_engine, get_session
+
+
+# Positions to query for free agents (covers all Yahoo baseball positions)
+YAHOO_POSITIONS = ["C", "1B", "2B", "3B", "SS", "LF", "CF", "RF", "OF",
+                    "DH", "SP", "RP", "P"]
+
+# Yahoo positions to exclude from stored eligibility (not real positions)
+YAHOO_META_POSITIONS = {"Util", "BN", "DL", "IL", "IL+", "NA"}
+
+
+def normalize_name(name: str) -> str:
+    """Normalize a player name for matching.
+
+    Strips accents, lowercases, removes suffixes like Jr./III/II,
+    and strips parenthetical notes.
+    """
+    # Remove parenthetical suffixes like "(Hitter)" or "(SP)"
+    if "(" in name:
+        name = name[:name.index("(")]
+
+    # Strip accents/diacritics
+    name = unicodedata.normalize("NFKD", name)
+    name = "".join(c for c in name if not unicodedata.combining(c))
+
+    # Lowercase and strip
+    name = name.lower().strip()
+
+    # Remove common suffixes
+    for suffix in [" jr.", " jr", " sr.", " sr", " iii", " ii", " iv"]:
+        if name.endswith(suffix):
+            name = name[: -len(suffix)].strip()
+
+    # Remove periods and extra spaces
+    name = name.replace(".", "")
+    name = " ".join(name.split())
+
+    return name
+
+
+def _extract_name_type_hint(name: str) -> str | None:
+    """Extract type hint from parenthetical suffix like 'Shohei Ohtani (Hitter)'.
+
+    Returns 'hitter' or 'pitcher' if found, None otherwise.
+    """
+    if "(" in name and ")" in name:
+        hint = name[name.index("(") + 1:name.index(")")].strip().lower()
+        if hint in ("hitter", "batter"):
+            return "hitter"
+        if hint in ("pitcher",):
+            return "pitcher"
+    return None
+
+
+def match_players(yahoo_players: dict[str, dict], db_players: list[Player],
+                  threshold: float = 0.85) -> list[tuple[Player, dict, float]]:
+    """Match database players to Yahoo players by name.
+
+    Handles split players (e.g., Ohtani listed as both Hitter and Pitcher
+    on Yahoo) by using the parenthetical type hint to match against
+    the player_type in the database.
+
+    Returns list of (db_player, yahoo_data, score) tuples.
+    """
+    matched = []
+    unmatched_db = []
+
+    # Build normalized name lookup for Yahoo players
+    # Key: (normalized_name, type_hint_or_None)
+    yahoo_by_norm = {}
+    yahoo_typed = {}  # name -> {type_hint: yahoo_player} for split players
+    for yp in yahoo_players.values():
+        norm = normalize_name(yp["name"])
+        type_hint = _extract_name_type_hint(yp["name"])
+        if type_hint:
+            yahoo_typed.setdefault(norm, {})[type_hint] = yp
+        else:
+            yahoo_by_norm[norm] = yp
+
+    for player in db_players:
+        norm_name = normalize_name(player.name)
+
+        # Check for type-specific match first (split players like Ohtani)
+        if norm_name in yahoo_typed and player.player_type in yahoo_typed[norm_name]:
+            matched.append((player, yahoo_typed[norm_name][player.player_type], 1.0))
+            continue
+
+        # Exact normalized match
+        if norm_name in yahoo_by_norm:
+            matched.append((player, yahoo_by_norm[norm_name], 1.0))
+            continue
+
+        # Fuzzy match (only against non-typed players)
+        best_score = 0
+        best_yahoo = None
+        for yahoo_norm, yp in yahoo_by_norm.items():
+            score = SequenceMatcher(None, norm_name, yahoo_norm).ratio()
+            if score > best_score:
+                best_score = score
+                best_yahoo = yp
+
+        if best_score >= threshold and best_yahoo is not None:
+            matched.append((player, best_yahoo, best_score))
+        else:
+            unmatched_db.append(player)
+
+    return matched, unmatched_db
+
+
+def format_positions(eligible_positions: list[str]) -> str:
+    """Convert Yahoo eligible_positions list to comma-separated string.
+
+    Filters out meta-positions like Util, BN, IL.
+    """
+    # Separate Util from other meta-positions
+    non_meta = [p for p in eligible_positions if p not in YAHOO_META_POSITIONS]
+    has_util = "Util" in eligible_positions
+
+    # Normalize OF positions: LF/CF/RF -> OF
+    outfield = {"LF", "CF", "RF"}
+    if any(p in outfield for p in non_meta):
+        non_meta = [p for p in non_meta if p not in outfield]
+        if "OF" not in non_meta:
+            non_meta.append("OF")
+
+    # If no real positions but player has Util, keep it as UTIL
+    if not non_meta and has_util:
+        return "UTIL"
+
+    return ",".join(non_meta) if non_meta else ""
+
+
+def fetch_yahoo_players(league) -> dict[str, dict]:
+    """Fetch all players from a Yahoo league with their position data.
+
+    Returns dict keyed by player_id with name and eligible_positions.
+    """
+    all_players = {}
+
+    # Fetch free agents for each position
+    for pos in YAHOO_POSITIONS:
+        print(f"  Fetching free agents: {pos}...")
+        try:
+            fas = league.free_agents(pos)
+            for p in fas:
+                pid = str(p["player_id"])
+                if pid not in all_players:
+                    all_players[pid] = {
+                        "player_id": pid,
+                        "name": p["name"],
+                        "eligible_positions": p.get("eligible_positions", []),
+                        "position_type": p.get("position_type", ""),
+                    }
+        except Exception as e:
+            print(f"  Warning: failed to fetch {pos} free agents: {e}")
+
+    # Fetch taken (rostered) players
+    print("  Fetching rostered players...")
+    try:
+        taken = league.taken_players()
+        for p in taken:
+            pid = str(p["player_id"])
+            if pid not in all_players:
+                all_players[pid] = {
+                    "player_id": pid,
+                    "name": p["name"],
+                    "eligible_positions": p.get("eligible_positions", []),
+                    "position_type": p.get("position_type", ""),
+                }
+    except Exception as e:
+        print(f"  Warning: failed to fetch rostered players: {e}")
+
+    return all_players
+
+
+def main():
+    parser = argparse.ArgumentParser(
+        description="Fetch Yahoo Fantasy Baseball position data and update the draft database."
+    )
+    parser.add_argument(
+        "--league-id",
+        required=True,
+        help="Yahoo league ID (e.g., 388.l.12345). Find this in your league URL.",
+    )
+    parser.add_argument(
+        "--db-path",
+        default="draft.db",
+        help="Path to SQLite database (default: draft.db)",
+    )
+    parser.add_argument(
+        "--oauth-file",
+        default="oauth2.json",
+        help="Path to Yahoo OAuth credentials file (default: oauth2.json)",
+    )
+    parser.add_argument(
+        "--dry-run",
+        action="store_true",
+        help="Show matches without writing to database",
+    )
+    parser.add_argument(
+        "--threshold",
+        type=float,
+        default=0.90,
+        help="Fuzzy match threshold 0-1 (default: 0.90)",
+    )
+    args = parser.parse_args()
+
+    # Validate oauth file exists
+    oauth_path = Path(args.oauth_file)
+    if not oauth_path.exists():
+        print(f"Error: OAuth file not found: {oauth_path}")
+        print("Create it with: {\"consumer_key\": \"YOUR_KEY\", \"consumer_secret\": \"YOUR_SECRET\"}")
+        sys.exit(1)
+
+    # Connect to Yahoo
+    print("Connecting to Yahoo Fantasy API...")
+    sc = OAuth2(None, None, from_file=str(oauth_path))
+    if not sc.token_is_valid():
+        sc.refresh_access_token()
+
+    gm = yfa.Game(sc, "mlb")
+
+    # If user passed just a number, resolve the full league key
+    league_id = args.league_id
+    if "." not in league_id:
+        game_key = gm.game_id()
+        if not game_key:
+            print("Error: Could not determine MLB game key. Try passing the full league key (e.g., 449.l.12345).")
+            sys.exit(1)
+        league_id = f"{game_key}.l.{league_id}"
+        print(f"Resolved league key: {league_id}")
+
+    lg = gm.to_league(league_id)
+    print(f"Connected to league: {league_id}")
+
+    # Fetch Yahoo players
+    print("Fetching players from Yahoo...")
+    yahoo_players = fetch_yahoo_players(lg)
+    print(f"Found {len(yahoo_players)} players on Yahoo")
+
+    # Load database players
+    print("Loading database players...")
+    engine = get_engine(args.db_path)
+    session = get_session(engine)
+    db_players = session.query(Player).all()
+    print(f"Found {len(db_players)} players in database")
+
+    if not db_players:
+        print("Error: No players in database. Import FGDC projections first.")
+        session.close()
+        sys.exit(1)
+
+    # Match players
+    print(f"Matching players (threshold: {args.threshold})...")
+    matched, unmatched_db = match_players(yahoo_players, db_players, args.threshold)
+
+    # Second pass: search Yahoo by name for unmatched players
+    if unmatched_db:
+        print(f"Searching Yahoo for {len(unmatched_db)} unmatched players...")
+        still_unmatched = []
+        for player in unmatched_db:
+            try:
+                results = lg.player_details(player.name)
+                if not results:
+                    still_unmatched.append(player)
+                    continue
+
+                # Find best match from search results using type hint
+                best = None
+                for r in results:
+                    name = r.get("name", "")
+                    if isinstance(name, dict):
+                        name = name.get("full", "")
+                    type_hint = _extract_name_type_hint(name)
+                    norm = normalize_name(name)
+                    player_norm = normalize_name(player.name)
+
+                    # Type-specific match for split players
+                    if type_hint and type_hint == player.player_type and norm == player_norm:
+                        best = r
+                        break
+                    # Regular match
+                    if not type_hint and norm == player_norm:
+                        best = r
+                        break
+
+                if best:
+                    # Extract eligible positions from search result format
+                    positions = best.get("eligible_positions", [])
+                    if positions and isinstance(positions[0], dict):
+                        positions = [p["position"] for p in positions]
+                    yahoo_data = {
+                        "player_id": str(best["player_id"]),
+                        "name": best["name"] if isinstance(best["name"], str) else best["name"].get("full", ""),
+                        "eligible_positions": positions,
+                        "position_type": best.get("position_type", ""),
+                    }
+                    matched.append((player, yahoo_data, 1.0))
+                else:
+                    still_unmatched.append(player)
+            except Exception:
+                still_unmatched.append(player)
+        unmatched_db = still_unmatched
+
+    # Report results
+    print(f"\nResults:")
+    print(f"  Matched: {len(matched)}")
+    print(f"  Unmatched (DB): {len(unmatched_db)}")
+
+    # Show fuzzy matches (non-exact) for review
+    fuzzy_matches = [(p, y, s) for p, y, s in matched if s < 1.0]
+    if fuzzy_matches:
+        print(f"\nFuzzy matches ({len(fuzzy_matches)}):")
+        for player, yahoo, score in sorted(fuzzy_matches, key=lambda x: x[2]):
+            print(f"  {player.name} -> {yahoo['name']} (score: {score:.2f})")
+
+    # Show unmatched players
+    if unmatched_db:
+        print(f"\nUnmatched database players ({len(unmatched_db)}):")
+        for player in unmatched_db[:20]:
+            print(f"  {player.name} ({player.team})")
+        if len(unmatched_db) > 20:
+            print(f"  ... and {len(unmatched_db) - 20} more")
+
+    # Write to database
+    if args.dry_run:
+        print("\nDry run - no changes written to database.")
+        # Show what would be written
+        print("\nSample updates:")
+        for player, yahoo, score in matched[:10]:
+            positions = format_positions(yahoo["eligible_positions"])
+            print(f"  {player.name}: positions={positions}, yahoo_id={yahoo['player_id']}")
+    else:
+        print("\nWriting to database...")
+        updated = 0
+        for player, yahoo, score in matched:
+            player.yahoo_id = yahoo["player_id"]
+            player.positions = format_positions(yahoo["eligible_positions"])
+            updated += 1
+
+        session.commit()
+        print(f"Updated {updated} players with Yahoo position data.")
+
+    session.close()
+
+
+if __name__ == "__main__":
+    main()

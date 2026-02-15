@@ -35,3 +35,6 @@ htmlcov/
 .htpasswd
 ssl/
 data/
+
+# Yahoo OAuth credentials
+oauth2.json
