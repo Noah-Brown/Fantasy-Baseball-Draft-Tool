@@ -117,25 +117,6 @@ st.markdown("""
         --dark-red: #B84233;
     }
 
-    /* Override Streamlit's own backgrounds and text */
-    .stApp, [data-testid="stAppViewContainer"] {
-        background-color: var(--bg-primary) !important;
-        color: var(--text-primary) !important;
-    }
-    .stApp [data-testid="stHeader"] {
-        background-color: var(--bg-primary) !important;
-    }
-    .stApp .main .block-container {
-        color: var(--text-primary) !important;
-    }
-    [data-testid="stExpander"] {
-        background-color: var(--bg-secondary) !important;
-        border-color: var(--divider) !important;
-    }
-    [data-testid="stExpander"] summary {
-        color: var(--text-primary) !important;
-    }
-
     /* Dark mode overrides for Pandas DataFrame inline styles */
     td[style*="background-color: #D4E8C7"] { background-color: #2A4A2A !important; color: #FDF6EC !important; }
     td[style*="background-color: #B8D4A3"] { background-color: #2D5A2D !important; color: #FDF6EC !important; }
@@ -151,6 +132,25 @@ st.markdown("""
     [data-testid="stDataFrame"] td {
         color: var(--text-primary) !important;
     }
+}
+
+/* === Apply baseball theme to Streamlit elements (both modes) === */
+.stApp, [data-testid="stAppViewContainer"] {
+    background-color: var(--bg-primary) !important;
+    color: var(--text-primary) !important;
+}
+.stApp [data-testid="stHeader"] {
+    background-color: var(--bg-primary) !important;
+}
+.stApp .main .block-container {
+    color: var(--text-primary) !important;
+}
+[data-testid="stExpander"] {
+    background-color: var(--bg-secondary) !important;
+    border-color: var(--divider) !important;
+}
+[data-testid="stExpander"] summary {
+    color: var(--text-primary) !important;
 }
 
 /* Sidebar styling — deep navy scoreboard */
