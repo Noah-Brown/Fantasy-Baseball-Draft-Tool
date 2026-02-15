@@ -153,6 +153,39 @@ st.markdown("""
     color: var(--text-primary) !important;
 }
 
+/* Widget labels, text, and inputs — ensure contrast on cream/dark backgrounds */
+.stApp label,
+.stApp .stRadio label,
+.stApp .stSelectbox label,
+.stApp .stMultiSelect label,
+.stApp .stNumberInput label,
+.stApp .stTextInput label,
+.stApp .stCheckbox label,
+.stApp .stRadio div[role="radiogroup"] label,
+[data-testid="stMetricLabel"],
+[data-testid="stMetricLabel"] p,
+.stApp p,
+.stApp .stMarkdown p,
+.stApp .stCaption,
+.stApp span {
+    color: var(--text-primary) !important;
+}
+/* Secondary text (captions, help text) */
+.stApp .stCaption p,
+[data-testid="stCaptionContainer"] p {
+    color: var(--text-secondary) !important;
+}
+/* Selectbox/multiselect dropdown and input backgrounds */
+.stApp [data-baseweb="select"] > div,
+.stApp [data-baseweb="input"] > div {
+    background-color: var(--bg-secondary) !important;
+    color: var(--text-primary) !important;
+}
+.stApp [data-baseweb="select"] span,
+.stApp [data-baseweb="input"] input {
+    color: var(--text-primary) !important;
+}
+
 /* Sidebar styling — deep navy scoreboard */
 [data-testid="stSidebar"] {
     background-color: var(--sidebar-bg);
