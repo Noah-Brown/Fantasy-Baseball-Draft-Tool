@@ -65,72 +65,13 @@ from src.needs import (
 # Page configuration
 st.set_page_config(
     page_title="Fantasy Baseball Draft Tool",
-    page_icon=None,
+    page_icon="⚾",
     layout="wide",
 )
 
 # Inject keyboard shortcuts for quick search
 inject_keyboard_shortcuts()
 inject_keyboard_hint()
-
-# Baseball-themed global CSS
-st.markdown("""
-<style>
-/* Sidebar styling — deep navy scoreboard */
-[data-testid="stSidebar"] {
-    background-color: #1B2A4A;
-    color: #FDF6EC;
-}
-[data-testid="stSidebar"] * {
-    color: #FDF6EC !important;
-}
-[data-testid="stSidebar"] .stRadio label:hover {
-    color: #C41E3A !important;
-}
-
-/* Headers — clean sans-serif with red accent */
-h1, h2, h3 {
-    font-family: 'Inter', 'Segoe UI', system-ui, -apple-system, sans-serif !important;
-    font-weight: 700 !important;
-}
-h2 {
-    border-bottom: 2px solid #C41E3A;
-    padding-bottom: 0.3rem;
-}
-
-/* Buttons — uppercase with red border */
-.stButton > button {
-    font-family: 'Inter', 'Segoe UI', system-ui, -apple-system, sans-serif !important;
-    text-transform: uppercase;
-    letter-spacing: 0.05em;
-    font-weight: 600;
-    border-color: #C41E3A !important;
-}
-.stButton > button:hover {
-    border-color: #C41E3A !important;
-    color: #C41E3A !important;
-}
-
-/* Metrics — red values */
-[data-testid="stMetricValue"] {
-    color: #C41E3A !important;
-    font-weight: 700 !important;
-}
-
-/* Dividers — warm khaki */
-hr {
-    border-color: #D4C5A0 !important;
-}
-
-/* Tabs — red active indicator */
-.stTabs [data-baseweb="tab-highlight"] {
-    background-color: #C41E3A !important;
-}
-.stTabs [aria-selected="true"] {
-    color: #C41E3A !important;
-}
-</style>
-""", unsafe_allow_html=True)
 
 # Initialize database
 @st.cache_resource
@@ -269,7 +210,7 @@ def main():
     # Auto-load data from CSVs in data folder if database is empty
     auto_load_data(session)
 
-    st.title("Fantasy Baseball Draft Tool")
+    st.title("⚾ Fantasy Baseball Auction Draft Tool")
 
     # Sidebar for navigation and settings
     with st.sidebar:
@@ -349,15 +290,11 @@ def show_home_page(session):
     st.subheader("Getting Started")
 
     st.markdown("""
-<div style="background-color: #F0E6D3; border-left: 4px solid #C41E3A; padding: 16px 20px; border-radius: 4px; margin: 8px 0;">
-<ol style="margin: 0; padding-left: 20px;">
-<li><strong>League Settings</strong> — Configure your league size, budget, roster spots, and scoring categories</li>
-<li><strong>Player Database</strong> — Browse player projections and SGP-based dollar values</li>
-<li><strong>My Targets</strong> — Build a watchlist of players you want to draft with max bid prices</li>
-<li><strong>Draft Room</strong> — Run your draft with live value updates as players come off the board</li>
-</ol>
-</div>
-""", unsafe_allow_html=True)
+1. **League Settings** — Configure your league size, budget, roster spots, and scoring categories
+2. **Player Database** — Browse player projections and SGP-based dollar values
+3. **My Targets** — Build a watchlist of players you want to draft with max bid prices
+4. **Draft Room** — Run your draft with live value updates as players come off the board
+""")
 
     st.divider()
 
@@ -1479,10 +1416,10 @@ def show_my_targets(session):
         # Determine status and styling
         if is_drafted:
             status = "🔴 Drafted"
-            container_style = "background-color: #F0CFC8;"
+            container_style = "background-color: #ffebee;"
         elif value <= target.max_bid:
             status = "🟢 Bargain!"
-            container_style = "background-color: #D4E8C7;"
+            container_style = "background-color: #e8f5e9;"
         else:
             status = "🟡 Available"
             container_style = ""
@@ -1568,13 +1505,13 @@ def style_surplus(val):
     if pd.isna(val):
         return ''
     if val >= 5:
-        return 'background-color: #B8D4A3'  # Grass green (great deal)
+        return 'background-color: #90EE90'  # Light green (great deal)
     elif val >= 1:
-        return 'background-color: #D4E8C7'  # Light grass (good deal)
+        return 'background-color: #98FB98'  # Pale green (good deal)
     elif val >= -4:
-        return 'background-color: #EDE4CC'  # Infield dirt (fair/slight overpay)
+        return 'background-color: #FFFFE0'  # Light yellow (fair/slight overpay)
     else:
-        return 'background-color: #F0CFC8'  # Warning track clay (significant overpay)
+        return 'background-color: #FFB6C1'  # Light pink/red (significant overpay)
 
 
 def style_sgp(val):
@@ -1582,19 +1519,19 @@ def style_sgp(val):
     if pd.isna(val):
         return ''
     if val >= 2.0:
-        return 'background-color: #3A6B2F; color: white; font-weight: bold'
+        return 'background-color: #2E7D32; color: white; font-weight: bold'
     elif val >= 1.0:
-        return 'background-color: #4A7C3F; color: white; font-weight: bold'
+        return 'background-color: #66BB6A; color: #1B5E20; font-weight: bold'
     elif val >= 0.5:
-        return 'background-color: #B8D4A3; color: #2C1810'
+        return 'background-color: #A5D6A7; color: #1B5E20'
     elif val >= -0.5:
         return ''  # Neutral
     elif val >= -1.0:
-        return 'background-color: #F0CFC8; color: #6B5B4F'
+        return 'background-color: #FFCDD2; color: #B71C1C'
     elif val >= -2.0:
-        return 'background-color: #D9907F; color: #2C1810; font-weight: bold'
+        return 'background-color: #EF9A9A; color: #B71C1C; font-weight: bold'
     else:
-        return 'background-color: #B84233; color: white; font-weight: bold'
+        return 'background-color: #E57373; color: white; font-weight: bold'
 
 
 def create_category_bar_chart(analysis: dict) -> alt.Chart:
@@ -1650,7 +1587,7 @@ def create_category_bar_chart(analysis: dict) -> alt.Chart:
     # Define color scale
     color_scale = alt.Scale(
         domain=["Strong", "Average", "Weak"],
-        range=["#4A7C3F", "#D4C5A0", "#B84233"]
+        range=["#90EE90", "#FFFFE0", "#FFB6C1"]
     )
 
     # Create chart
@@ -1964,13 +1901,13 @@ def render_positional_roster_grid(positional_states: list) -> None:
 
                 # Determine color based on fill status
                 if state.remaining == 0:
-                    color = "#D4E8C7"  # Grass green - filled
+                    color = "#90EE90"  # Green - filled
                     icon = ""
                 elif state.filled > 0:
-                    color = "#EDE4CC"  # Infield dirt - partial
+                    color = "#FFFFE0"  # Yellow - partial
                     icon = ""
                 else:
-                    color = "#F0CFC8"  # Warning track clay - empty
+                    color = "#FFB6C1"  # Red - empty
                     icon = ""
 
                 # Build display
@@ -1978,7 +1915,7 @@ def render_positional_roster_grid(positional_states: list) -> None:
                 st.markdown(
                     f'<div style="background-color: {color}; padding: 8px; margin: 4px 0; border-radius: 4px;">'
                     f'<strong>{state.position}</strong>: {state.filled}/{state.required} '
-                    f'<span style="color: #6B5B4F;">({players_str})</span></div>',
+                    f'<span style="color: #666;">({players_str})</span></div>',
                     unsafe_allow_html=True,
                 )
         else:
@@ -1993,18 +1930,18 @@ def render_positional_roster_grid(positional_states: list) -> None:
 
                 # Determine color based on fill status
                 if state.remaining == 0:
-                    color = "#D4E8C7"  # Grass green - filled
+                    color = "#90EE90"  # Green - filled
                 elif state.filled > 0:
-                    color = "#EDE4CC"  # Infield dirt - partial
+                    color = "#FFFFE0"  # Yellow - partial
                 else:
-                    color = "#F0CFC8"  # Warning track clay - empty
+                    color = "#FFB6C1"  # Red - empty
 
                 # Build display
                 players_str = ", ".join(state.players) if state.players else "Empty"
                 st.markdown(
                     f'<div style="background-color: {color}; padding: 8px; margin: 4px 0; border-radius: 4px;">'
                     f'<strong>{state.position}</strong>: {state.filled}/{state.required} '
-                    f'<span style="color: #6B5B4F;">({players_str})</span></div>',
+                    f'<span style="color: #666;">({players_str})</span></div>',
                     unsafe_allow_html=True,
                 )
         else:
@@ -2074,18 +2011,18 @@ def render_comparative_standings(comparative_standings: dict, user_team_name: st
         try:
             pos = int(val)
             if pos <= 4:
-                return 'background-color: #D4E8C7'  # Grass green
+                return 'background-color: #90EE90'  # Green
             elif pos <= 8:
-                return 'background-color: #EDE4CC'  # Infield dirt
+                return 'background-color: #FFFFE0'  # Yellow
             else:
-                return 'background-color: #F0CFC8'  # Warning track clay
+                return 'background-color: #FFB6C1'  # Red
         except (ValueError, TypeError):
             return ''
 
     # Highlight user's team row
     def highlight_user_team(row):
         if user_team_name in str(row.get("Team", "")):
-            return ['font-weight: bold; border: 2px solid #C41E3A'] * len(row)
+            return ['font-weight: bold; border: 2px solid #1E88E5'] * len(row)
         return [''] * len(row)
 
     cat_cols = [c.upper() for c in all_cats]
