@@ -122,6 +122,64 @@ Fantasy-Baseball-Draft-Tool/
 - yahoo_oauth >= 1.1.0
 - yahoo_fantasy_api >= 2.12.0
 
+## Docker Deployment
+
+Start all containers (app instances + nginx):
+
+```bash
+docker-compose up -d
+```
+
+Rebuild after code changes:
+
+```bash
+docker-compose up -d --build
+```
+
+Restart a specific service:
+
+```bash
+docker-compose restart nginx
+docker-compose restart app-noah
+```
+
+Stop all containers:
+
+```bash
+docker-compose down
+```
+
+View logs:
+
+```bash
+docker-compose logs -f          # all services
+docker-compose logs -f app-noah # single service
+```
+
+## Changing the HTTP Auth Password
+
+The app is protected by HTTP Basic Auth at the nginx level. The `.htpasswd` file lives in the project root and is mounted into the nginx container.
+
+To add or update a user's password:
+
+```bash
+# Install htpasswd if needed (usually in apache2-utils)
+sudo apt install apache2-utils
+
+# Add a new user or update an existing user's password
+htpasswd .htpasswd <username>
+
+# Restart nginx to pick up the change
+docker-compose restart nginx
+```
+
+To remove a user:
+
+```bash
+htpasswd -D .htpasswd <username>
+docker-compose restart nginx
+```
+
 ## License
 
 MIT
