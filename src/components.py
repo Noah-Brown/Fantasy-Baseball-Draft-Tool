@@ -3,6 +3,7 @@
 import streamlit as st
 
 
+
 def inject_keyboard_shortcuts():
     """
     Inject JavaScript for keyboard shortcuts to focus search inputs.
@@ -84,18 +85,19 @@ def inject_keyboard_hint():
         position: fixed;
         bottom: 16px;
         right: 16px;
-        background-color: rgba(49, 51, 63, 0.9);
-        color: rgba(255, 255, 255, 0.8);
+        background-color: rgba(27, 42, 74, 0.92);
+        color: rgba(253, 246, 236, 0.85);
         padding: 8px 12px;
         border-radius: 6px;
         font-size: 12px;
         font-family: monospace;
         z-index: 1000;
         pointer-events: none;
+        border: 1px solid rgba(196, 30, 58, 0.3);
     }
 
     .keyboard-hint kbd {
-        background-color: rgba(255, 255, 255, 0.15);
+        background-color: rgba(253, 246, 236, 0.15);
         padding: 2px 6px;
         border-radius: 3px;
         margin: 0 2px;
