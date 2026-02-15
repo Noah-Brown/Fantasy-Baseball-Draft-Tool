@@ -210,7 +210,7 @@ def main():
     # Auto-load data from CSVs in data folder if database is empty
     auto_load_data(session)
 
-    st.title("⚾ Fantasy Baseball Auction Draft Tool")
+    st.title("Noah's Fantasy Baseball Draft Tool")
 
     # Sidebar for navigation and settings
     with st.sidebar:
@@ -461,7 +461,7 @@ def show_player_database(session):
             max_bid = st.number_input(
                 "Max Bid ($)",
                 min_value=1,
-                max_value=999,
+                max_value=9999,
                 value=default_bid,
                 key="db_target_max_bid",
             )
@@ -560,7 +560,7 @@ def draft_player_dialog(player, session, settings, draft_state):
         price = st.number_input(
             "Price ($)",
             min_value=1,
-            max_value=999,
+            max_value=9999,
             value=default_price,
             key="dialog_draft_price",
         )
@@ -769,7 +769,7 @@ def show_draft_room(session):
                     price = st.number_input(
                         "Price ($)",
                         min_value=1,
-                        max_value=999,
+                        max_value=9999,
                         value=default_price,
                         key="draft_price",
                     )
@@ -1356,7 +1356,7 @@ def show_my_targets(session):
             max_bid = st.number_input(
                 "Max Bid ($)",
                 min_value=1,
-                max_value=999,
+                max_value=9999,
                 value=default_max,
                 key="target_max_bid",
             )
@@ -1464,7 +1464,7 @@ def show_my_targets(session):
                     new_max = st.number_input(
                         "New Max Bid",
                         min_value=1,
-                        max_value=999,
+                        max_value=9999,
                         value=target.max_bid,
                         key=f"edit_max_{player.id}",
                     )
