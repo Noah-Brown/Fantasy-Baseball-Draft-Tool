@@ -77,7 +77,7 @@ inject_keyboard_hint()
 @st.cache_resource
 def get_db():
     """Initialize and cache database connection."""
-    engine = init_db("draft.db")
+    engine = init_db("data/draft.db")
     return engine
 
 

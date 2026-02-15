@@ -167,12 +167,12 @@ class TargetPlayer(Base):
         return f"<TargetPlayer {self.player.name if self.player else 'Unknown'} max=${self.max_bid}>"
 
 
-def get_engine(db_path: str = "draft.db"):
+def get_engine(db_path: str = "data/draft.db"):
     """Create database engine."""
     return create_engine(f"sqlite:///{db_path}")
 
 
-def init_db(db_path: str = "draft.db"):
+def init_db(db_path: str = "data/draft.db"):
     """Initialize the database with all tables."""
     engine = get_engine(db_path)
     Base.metadata.create_all(engine)

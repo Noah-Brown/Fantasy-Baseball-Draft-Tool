@@ -1,30 +1,75 @@
 version: '3.8'
 
+# Shared defaults for all app containers
+x-app-defaults: &app-defaults
+  build: .
+  restart: unless-stopped
+  networks:
+    - fantasy-net
+  healthcheck:
+    test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8501/_stcore/health')"]
+    interval: 30s
+    timeout: 5s
+    retries: 3
+  deploy:
+    resources:
+      limits:
+        memory: 350M
+      reservations:
+        memory: 128M
+
 services:
-  app:
-    build: .
-    container_name: fantasy-baseball-app
-    restart: unless-stopped
+  app-noah:
+    <<: *app-defaults
+    container_name: fantasy-baseball-noah
     volumes:
-      # Persist SQLite database
-      - ./data:/app/data
-    environment:
-      # Optional: Set Streamlit server settings
-      - STREAMLIT_SERVER_PORT=8501
-    networks:
-      - fantasy-net
-    healthcheck:
-      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8501/_stcore/health')"]
-      interval: 30s
-      timeout: 5s
-      retries: 3
-    # Resource limits for 1.9GB RAM VPS
-    deploy:
-      resources:
-        limits:
-          memory: 512M
-        reservations:
-          memory: 256M
+      - data-noah:/app/data
+    entrypoint: ["streamlit", "run", "app.py",
+      "--server.port=8501",
+      "--server.address=0.0.0.0",
+      "--server.headless=true",
+      "--server.fileWatcherType=none",
+      "--browser.gatherUsageStats=false",
+      "--server.baseUrlPath=noah"]
+
+  app-scott:
+    <<: *app-defaults
+    container_name: fantasy-baseball-scott
+    volumes:
+      - data-scott:/app/data
+    entrypoint: ["streamlit", "run", "app.py",
+      "--server.port=8501",
+      "--server.address=0.0.0.0",
+      "--server.headless=true",
+      "--server.fileWatcherType=none",
+      "--browser.gatherUsageStats=false",
+      "--server.baseUrlPath=scott"]
+
+  app-brooks:
+    <<: *app-defaults
+    container_name: fantasy-baseball-brooks
+    volumes:
+      - data-brooks:/app/data
+    entrypoint: ["streamlit", "run", "app.py",
+      "--server.port=8501",
+      "--server.address=0.0.0.0",
+      "--server.headless=true",
+      "--server.fileWatcherType=none",
+      "--browser.gatherUsageStats=false",
+      "--server.baseUrlPath=brooks"]
+
+  app-brady:
+    <<: *app-defaults
+    container_name: fantasy-baseball-brady
+    volumes:
+      - data-brady:/app/data
+    entrypoint: ["streamlit", "run", "app.py",
+      "--server.port=8501",
+      "--server.address=0.0.0.0",
+      "--server.headless=true",
+      "--server.fileWatcherType=none",
+      "--browser.gatherUsageStats=false",
+      "--server.baseUrlPath=brady"]
 
   nginx:
     image: nginx:alpine
@@ -38,9 +83,18 @@ services:
       - ./ssl:/etc/nginx/ssl:ro
       - ./.htpasswd:/etc/nginx/.htpasswd:ro
     depends_on:
-      - app
+      - app-noah
+      - app-scott
+      - app-brooks
+      - app-brady
     networks:
       - fantasy-net
+
+volumes:
+  data-noah:
+  data-scott:
+  data-brooks:
+  data-brady:
 
 networks:
   fantasy-net:
