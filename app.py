@@ -73,129 +73,19 @@ st.set_page_config(
 inject_keyboard_shortcuts()
 inject_keyboard_hint()
 
-# Baseball-themed global CSS with dark mode support
+# Baseball-themed global CSS
 st.markdown("""
 <style>
-/* === CSS Custom Properties (Light Mode Defaults) === */
-:root {
-    --bg-primary: #FDF6EC;
-    --bg-secondary: #F0E6D3;
-    --text-primary: #2C1810;
-    --text-secondary: #6B5B4F;
-    --sidebar-bg: #1B2A4A;
-    --sidebar-text: #FDF6EC;
-    --accent-red: #C41E3A;
-    --divider: #D4C5A0;
-    --grass-green: #D4E8C7;
-    --dark-green: #3A6B2F;
-    --med-green: #4A7C3F;
-    --light-grass: #B8D4A3;
-    --infield-dirt: #EDE4CC;
-    --warning-clay: #F0CFC8;
-    --tan-rust: #D9907F;
-    --dark-red: #B84233;
-}
-
-/* === Dark Mode Overrides === */
-@media (prefers-color-scheme: dark) {
-    :root {
-        --bg-primary: #1a1a2e;
-        --bg-secondary: #252540;
-        --text-primary: #FDF6EC;
-        --text-secondary: #B8A99A;
-        --sidebar-bg: #0f0f23;
-        --sidebar-text: #FDF6EC;
-        --accent-red: #E8445A;
-        --divider: #3D3D5C;
-        --grass-green: #2A4A2A;
-        --dark-green: #3A6B2F;
-        --med-green: #4A7C3F;
-        --light-grass: #2D5A2D;
-        --infield-dirt: #3D3550;
-        --warning-clay: #4A2A2A;
-        --tan-rust: #8B4A3A;
-        --dark-red: #B84233;
-    }
-
-    /* Dark mode overrides for Pandas DataFrame inline styles */
-    td[style*="background-color: #D4E8C7"] { background-color: #2A4A2A !important; color: #FDF6EC !important; }
-    td[style*="background-color: #B8D4A3"] { background-color: #2D5A2D !important; color: #FDF6EC !important; }
-    td[style*="background-color: #EDE4CC"] { background-color: #3D3550 !important; color: #FDF6EC !important; }
-    td[style*="background-color: #F0CFC8"] { background-color: #4A2A2A !important; color: #FDF6EC !important; }
-    td[style*="background-color: #3A6B2F"] { background-color: #3A6B2F !important; color: #FDF6EC !important; }
-    td[style*="background-color: #4A7C3F"] { background-color: #4A7C3F !important; color: #FDF6EC !important; }
-    td[style*="background-color: #D9907F"] { background-color: #8B4A3A !important; color: #FDF6EC !important; }
-    td[style*="background-color: #B84233"] { background-color: #B84233 !important; color: #FDF6EC !important; }
-
-    /* DataFrame text in dark mode */
-    [data-testid="stDataFrame"] th,
-    [data-testid="stDataFrame"] td {
-        color: var(--text-primary) !important;
-    }
-}
-
-/* === Apply baseball theme to Streamlit elements (both modes) === */
-.stApp, [data-testid="stAppViewContainer"] {
-    background-color: var(--bg-primary) !important;
-    color: var(--text-primary) !important;
-}
-.stApp [data-testid="stHeader"] {
-    background-color: var(--bg-primary) !important;
-}
-.stApp .main .block-container {
-    color: var(--text-primary) !important;
-}
-[data-testid="stExpander"] {
-    background-color: var(--bg-secondary) !important;
-    border-color: var(--divider) !important;
-}
-[data-testid="stExpander"] summary {
-    color: var(--text-primary) !important;
-}
-
-/* Widget labels, text, and inputs — ensure contrast on cream/dark backgrounds */
-.stApp label,
-.stApp .stRadio label,
-.stApp .stSelectbox label,
-.stApp .stMultiSelect label,
-.stApp .stNumberInput label,
-.stApp .stTextInput label,
-.stApp .stCheckbox label,
-.stApp .stRadio div[role="radiogroup"] label,
-[data-testid="stMetricLabel"],
-[data-testid="stMetricLabel"] p,
-.stApp p,
-.stApp .stMarkdown p,
-.stApp .stCaption,
-.stApp span {
-    color: var(--text-primary) !important;
-}
-/* Secondary text (captions, help text) */
-.stApp .stCaption p,
-[data-testid="stCaptionContainer"] p {
-    color: var(--text-secondary) !important;
-}
-/* Selectbox/multiselect dropdown and input backgrounds */
-.stApp [data-baseweb="select"] > div,
-.stApp [data-baseweb="input"] > div {
-    background-color: var(--bg-secondary) !important;
-    color: var(--text-primary) !important;
-}
-.stApp [data-baseweb="select"] span,
-.stApp [data-baseweb="input"] input {
-    color: var(--text-primary) !important;
-}
-
 /* Sidebar styling — deep navy scoreboard */
 [data-testid="stSidebar"] {
-    background-color: var(--sidebar-bg);
-    color: var(--sidebar-text);
+    background-color: #1B2A4A;
+    color: #FDF6EC;
 }
 [data-testid="stSidebar"] * {
-    color: var(--sidebar-text) !important;
+    color: #FDF6EC !important;
 }
 [data-testid="stSidebar"] .stRadio label:hover {
-    color: var(--accent-red) !important;
+    color: #C41E3A !important;
 }
 
 /* Headers — clean sans-serif with red accent */
@@ -204,7 +94,7 @@ h1, h2, h3 {
     font-weight: 700 !important;
 }
 h2 {
-    border-bottom: 2px solid var(--accent-red);
+    border-bottom: 2px solid #C41E3A;
     padding-bottom: 0.3rem;
 }
 
@@ -214,69 +104,30 @@ h2 {
     text-transform: uppercase;
     letter-spacing: 0.05em;
     font-weight: 600;
-    border-color: var(--accent-red) !important;
+    border-color: #C41E3A !important;
 }
 .stButton > button:hover {
-    border-color: var(--accent-red) !important;
-    color: var(--accent-red) !important;
+    border-color: #C41E3A !important;
+    color: #C41E3A !important;
 }
 
 /* Metrics — red values */
 [data-testid="stMetricValue"] {
-    color: var(--accent-red) !important;
+    color: #C41E3A !important;
     font-weight: 700 !important;
 }
 
 /* Dividers — warm khaki */
 hr {
-    border-color: var(--divider) !important;
+    border-color: #D4C5A0 !important;
 }
 
 /* Tabs — red active indicator */
 .stTabs [data-baseweb="tab-highlight"] {
-    background-color: var(--accent-red) !important;
+    background-color: #C41E3A !important;
 }
 .stTabs [aria-selected="true"] {
-    color: var(--accent-red) !important;
-}
-
-/* === Reusable CSS classes for inline-styled elements === */
-.getting-started-box {
-    background-color: var(--bg-secondary);
-    border-left: 4px solid var(--accent-red);
-    padding: 16px 20px;
-    border-radius: 4px;
-    margin: 8px 0;
-    color: var(--text-primary);
-}
-.getting-started-box ol {
-    margin: 0;
-    padding-left: 20px;
-}
-
-.pos-filled {
-    background-color: var(--grass-green);
-    padding: 8px;
-    margin: 4px 0;
-    border-radius: 4px;
-    color: var(--text-primary);
-}
-.pos-partial {
-    background-color: var(--infield-dirt);
-    padding: 8px;
-    margin: 4px 0;
-    border-radius: 4px;
-    color: var(--text-primary);
-}
-.pos-empty {
-    background-color: var(--warning-clay);
-    padding: 8px;
-    margin: 4px 0;
-    border-radius: 4px;
-    color: var(--text-primary);
-}
-.pos-players {
-    color: var(--text-secondary);
+    color: #C41E3A !important;
 }
 </style>
 """, unsafe_allow_html=True)
@@ -498,8 +349,8 @@ def show_home_page(session):
     st.subheader("Getting Started")
 
     st.markdown("""
-<div class="getting-started-box">
-<ol>
+<div style="background-color: #F0E6D3; border-left: 4px solid #C41E3A; padding: 16px 20px; border-radius: 4px; margin: 8px 0;">
+<ol style="margin: 0; padding-left: 20px;">
 <li><strong>League Settings</strong> — Configure your league size, budget, roster spots, and scoring categories</li>
 <li><strong>Player Database</strong> — Browse player projections and SGP-based dollar values</li>
 <li><strong>My Targets</strong> — Build a watchlist of players you want to draft with max bid prices</li>
@@ -2111,20 +1962,23 @@ def render_positional_roster_grid(positional_states: list) -> None:
                 if state.required == 0:
                     continue
 
-                # Determine CSS class based on fill status
+                # Determine color based on fill status
                 if state.remaining == 0:
-                    css_class = "pos-filled"
+                    color = "#D4E8C7"  # Grass green - filled
+                    icon = ""
                 elif state.filled > 0:
-                    css_class = "pos-partial"
+                    color = "#EDE4CC"  # Infield dirt - partial
+                    icon = ""
                 else:
-                    css_class = "pos-empty"
+                    color = "#F0CFC8"  # Warning track clay - empty
+                    icon = ""
 
                 # Build display
                 players_str = ", ".join(state.players) if state.players else "Empty"
                 st.markdown(
-                    f'<div class="{css_class}">'
+                    f'<div style="background-color: {color}; padding: 8px; margin: 4px 0; border-radius: 4px;">'
                     f'<strong>{state.position}</strong>: {state.filled}/{state.required} '
-                    f'<span class="pos-players">({players_str})</span></div>',
+                    f'<span style="color: #6B5B4F;">({players_str})</span></div>',
                     unsafe_allow_html=True,
                 )
         else:
@@ -2137,20 +1991,20 @@ def render_positional_roster_grid(positional_states: list) -> None:
                 if state.required == 0:
                     continue
 
-                # Determine CSS class based on fill status
+                # Determine color based on fill status
                 if state.remaining == 0:
-                    css_class = "pos-filled"
+                    color = "#D4E8C7"  # Grass green - filled
                 elif state.filled > 0:
-                    css_class = "pos-partial"
+                    color = "#EDE4CC"  # Infield dirt - partial
                 else:
-                    css_class = "pos-empty"
+                    color = "#F0CFC8"  # Warning track clay - empty
 
                 # Build display
                 players_str = ", ".join(state.players) if state.players else "Empty"
                 st.markdown(
-                    f'<div class="{css_class}">'
+                    f'<div style="background-color: {color}; padding: 8px; margin: 4px 0; border-radius: 4px;">'
                     f'<strong>{state.position}</strong>: {state.filled}/{state.required} '
-                    f'<span class="pos-players">({players_str})</span></div>',
+                    f'<span style="color: #6B5B4F;">({players_str})</span></div>',
                     unsafe_allow_html=True,
                 )
         else:
