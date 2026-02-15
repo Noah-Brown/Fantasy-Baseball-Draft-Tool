@@ -85,8 +85,8 @@ def inject_keyboard_hint():
         position: fixed;
         bottom: 16px;
         right: 16px;
-        background-color: rgba(27, 42, 74, 0.92);
-        color: rgba(253, 246, 236, 0.85);
+        background-color: var(--sidebar-bg, rgba(27, 42, 74, 0.92));
+        color: var(--sidebar-text, rgba(253, 246, 236, 0.85));
         padding: 8px 12px;
         border-radius: 6px;
         font-size: 12px;
@@ -94,6 +94,7 @@ def inject_keyboard_hint():
         z-index: 1000;
         pointer-events: none;
         border: 1px solid rgba(196, 30, 58, 0.3);
+        opacity: 0.92;
     }
 
     .keyboard-hint kbd {
